@@ -1,2 +1,4 @@
 *.ta
 *.dmp
+*.lds
+/dyn_list
