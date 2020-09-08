@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/opt/optee-qemu/optee_client/out/export/usr/**",
+                "/opt/optee-qemu/optee_os/out/arm/export-ta_arm64/**"
+            ],
+            "defines": [
+                "CROSS_COMPILE=\"/opt/optee-qemu/toolchains/aarch64/bin/aarch64-linux-gnu-\"",
+                "HOST_CROSS_COMPILE=\"/opt/optee-qemu/toolchains/aarch64/bin/aarch64-linux-gnu-\"",
+                "TEEC_EXPORT=\"/opt/optee-qemu/optee_client/out/export/usr\"",
+                "TA_DEV_KIT_DIR=\"/opt/optee-qemu/optee_os/out/arm/export-ta_arm64\""
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}
