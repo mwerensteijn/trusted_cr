@@ -36,6 +36,8 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
+char * read_file_contents(const char * fileName, long * fileSize);
+
 int main(void)
 {
 	TEEC_Result res;
@@ -63,56 +65,50 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	FILE *f = fopen("pagemap.img", "rb");
-	
-	fseek(f, 0, SEEK_END);
-	long fileSize = ftell(f);
-	fseek(f, 0, SEEK_SET);
+	long fileSize = -1;
+	char * fileContents = read_file_contents("pagemap.img", &fileSize);
 
-	char *message = malloc(fileSize + 1);
-	fread(message, 1, fileSize, f);
-	fclose(f);
-	message[fileSize] = 0;
+	if(fileSize && fileContents) {
+		// Setup shared memory
+		sharedMemory.size = fileSize;
+		sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+		sharedMemory.buffer = fileContents;
 
-	// Setup shared memory
-	sharedMemory.size = fileSize;
-	sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-	sharedMemory.buffer = message;
+		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemory);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+				res, err_origin);
 
-	res = TEEC_RegisterSharedMemory(&ctx, &sharedMemory);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
-			res, err_origin);
+		/* Clear the TEEC_Operation struct */
+		memset(&op, 0, sizeof(op));
 
-	/* Clear the TEEC_Operation struct */
-	memset(&op, 0, sizeof(op));
+		/*
+		* Prepare the argument. Pass a value in the first parameter,
+		* the remaining three parameters are unused.
+		*/
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_NONE,
+					TEEC_NONE, TEEC_NONE);
 
-	/*
-	 * Prepare the argument. Pass a value in the first parameter,
-	 * the remaining three parameters are unused.
-	 */
-	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_NONE,
-		         TEEC_NONE, TEEC_NONE);
-
-	op.params[0].memref.parent = &sharedMemory;
-	op.params[0].memref.size = fileSize;
-	op.params[0].memref.offset = 0;
-	
-	/*
-	 * TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
-	 * called.
-	 */
-	printf("Invoking TA with message: \"%s\"\n", op.params[0].memref.parent->buffer);
-	res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING, &op,
-				 &err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-			res, err_origin);
-	printf("TA changed message to \"%s\"\n", op.params[0].memref.parent->buffer);
+		op.params[0].memref.parent = &sharedMemory;
+		op.params[0].memref.size = fileSize;
+		op.params[0].memref.offset = 0;
+		
+		/*
+		* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
+		* called.
+		*/
+		printf("Invoking TA with message: \"%s\"\n", (char *) op.params[0].memref.parent->buffer);
+		res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING, &op,
+					&err_origin);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+				res, err_origin);
+		printf("TA changed message to \"%s\"\n", (char *) op.params[0].memref.parent->buffer);
 
 
-	// Give the memory back
-	TEEC_ReleaseSharedMemory(&sharedMemory);
+		// Give the memory back
+		TEEC_ReleaseSharedMemory(&sharedMemory);
+	}
 
 	/*
 	 * We're done with the TA, close the session and
@@ -127,4 +123,32 @@ int main(void)
 	TEEC_FinalizeContext(&ctx);
 
 	return 0;
+}
+
+char * read_file_contents(const char * fileName, long * fileSize) {
+	char * message;
+	FILE *f = fopen(fileName, "rb");
+
+	if(f) {
+		// Determine file size
+		fseek(f, 0, SEEK_END);
+		*fileSize = ftell(f);
+		fseek(f, 0, SEEK_SET);
+
+		message = malloc(*fileSize + 1);
+		if(message) {
+			fread(message, 1, *fileSize, f);
+			message[*fileSize] = 0;
+		} else {
+			// Unable to malloc.
+			printf("Unable to malloc %ld bytes for file contents.\n", *fileSize + 1);
+			*fileSize = -1;
+		}
+
+		fclose(f);
+	} else {
+		printf("Unable to read file: %s\n", fileName);
+	}
+
+	return message;
 }
