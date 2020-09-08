@@ -92,7 +92,7 @@ int main(void)
 		op.params[0].memref.parent = &sharedMemory;
 		op.params[0].memref.size = fileSize;
 		op.params[0].memref.offset = 0;
-		
+
 		/*
 		* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
 		* called.
@@ -126,7 +126,7 @@ int main(void)
 }
 
 char * read_file_contents(const char * fileName, long * fileSize) {
-	char * message;
+	char * message = NULL;
 	FILE *f = fopen(fileName, "rb");
 
 	if(f) {
