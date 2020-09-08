@@ -38,7 +38,6 @@
 		
 
 /* The function IDs implemented in this TA */
-#define TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE		0
-#define TA_OPTEE_APP_MIGRATOR_CMD_DEC_VALUE		1
+#define TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING	0
 
 #endif /*TA_OPTEE_APP_MIGRATOR_H*/

@@ -41,10 +41,11 @@ int main(void)
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
+	TEEC_SharedMemory sharedMemory;
 	TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
 	uint32_t err_origin;
 	
-	printf("HELLO WORLD - NORMAL WORLD\n");
+	printf("OP-TEE App Migrator\n");
 
 	/* Initialize a context connecting us to the TEE */
 	res = TEEC_InitializeContext(NULL, &ctx);
@@ -61,13 +62,16 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	/*
-	 * Execute a function in the TA by invoking it, in this case
-	 * we're incrementing a number.
-	 *
-	 * The value of command ID part and how the parameters are
-	 * interpreted is part of the interface provided by the TA.
-	 */
+	int bufferSize = 20;
+	sharedMemory.size = bufferSize;
+	sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+
+	res = TEEC_AllocateSharedMemory(&ctx, &sharedMemory);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+			res, err_origin);
+
+	memcpy(sharedMemory.buffer, "hello world!", sizeof("hello world!"));
 
 	/* Clear the TEEC_Operation struct */
 	memset(&op, 0, sizeof(op));
@@ -76,21 +80,28 @@ int main(void)
 	 * Prepare the argument. Pass a value in the first parameter,
 	 * the remaining three parameters are unused.
 	 */
-	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INOUT, TEEC_NONE,
-					 TEEC_NONE, TEEC_NONE);
-	op.params[0].value.a = 42;
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_NONE,
+		         TEEC_NONE, TEEC_NONE);
 
+	op.params[0].memref.parent = &sharedMemory.buffer;
+	op.params[0].memref.size = bufferSize;
+	op.params[0].memref.offset = 0;
+	
 	/*
 	 * TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
 	 * called.
 	 */
-	printf("Invoking TA to increment %d\n", op.params[0].value.a);
-	res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE, &op,
+	printf("Invoking TA with message: \"%s\"\n", op.params[0].memref.parent->buffer);
+	res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING, &op,
 				 &err_origin);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
 			res, err_origin);
-	printf("TA incremented value to %d\n", op.params[0].value.a);
+	printf("TA changed message to \"%s\"\n", op.params[0].memref.parent->buffer);
+
+
+	// Give the memory back
+	TEEC_ReleaseSharedMemory(&sharedMemory);
 
 	/*
 	 * We're done with the TA, close the session and

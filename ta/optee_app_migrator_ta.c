@@ -30,6 +30,8 @@
 
 #include <optee_app_migrator_ta.h>
 
+#include <string.h>
+
 /*
  * Called when the instance of the TA is created. This is the first call in
  * the TA.
@@ -94,10 +96,10 @@ void TA_CloseSessionEntryPoint(void __maybe_unused *sess_ctx)
 	IMSG("Goodbye!\n");
 }
 
-static TEE_Result inc_value(uint32_t param_types,
+static TEE_Result print_string(uint32_t param_types,
 	TEE_Param params[4])
 {
-	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INOUT,
+	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INOUT,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE);
@@ -107,32 +109,17 @@ static TEE_Result inc_value(uint32_t param_types,
 	if (param_types != exp_param_types)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	IMSG("Got value: %u from NW", params[0].value.a);
-	params[0].value.a++;
-	IMSG("Increase value to: %u", params[0].value.a);
+	
+	IMSG("Got value from NW: \"%s\"", params[0].memref.buffer);
+
+	char message[] = "hello from ta";
+	memcpy(params[0].memref.buffer, message, sizeof(message));
+
+	IMSG("Changed value to: \"%s\"", params[0].memref.buffer);
 
 	return TEE_SUCCESS;
 }
 
-static TEE_Result dec_value(uint32_t param_types,
-	TEE_Param params[4])
-{
-	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INOUT,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE,
-						   TEE_PARAM_TYPE_NONE);
-
-	DMSG("has been called");
-
-	if (param_types != exp_param_types)
-		return TEE_ERROR_BAD_PARAMETERS;
-
-	IMSG("Got value: %u from NW", params[0].value.a);
-	params[0].value.a--;
-	IMSG("Decrease value to: %u", params[0].value.a);
-
-	return TEE_SUCCESS;
-}
 /*
  * Called when a TA is invoked. sess_ctx hold that value that was
  * assigned by TA_OpenSessionEntryPoint(). The rest of the paramters
@@ -145,10 +132,8 @@ TEE_Result TA_InvokeCommandEntryPoint(void __maybe_unused *sess_ctx,
 	(void)&sess_ctx; /* Unused parameter */
 
 	switch (cmd_id) {
-	case TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE:
-		return inc_value(param_types, params);
-	case TA_OPTEE_APP_MIGRATOR_CMD_DEC_VALUE:
-		return dec_value(param_types, params);
+	case TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING:
+		return print_string(param_types, params);
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
