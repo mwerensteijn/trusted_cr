@@ -27,6 +27,7 @@
 
 #include <err.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* OP-TEE TEE client API (built by optee_client) */
@@ -62,16 +63,26 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	int bufferSize = 20;
-	sharedMemory.size = bufferSize;
-	sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	FILE *f = fopen("pagemap.img", "rb");
+	
+	fseek(f, 0, SEEK_END);
+	long fileSize = ftell(f);
+	fseek(f, 0, SEEK_SET);
 
-	res = TEEC_AllocateSharedMemory(&ctx, &sharedMemory);
+	char *message = malloc(fileSize + 1);
+	fread(message, 1, fileSize, f);
+	fclose(f);
+	message[fileSize] = 0;
+
+	// Setup shared memory
+	sharedMemory.size = fileSize;
+	sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	sharedMemory.buffer = message;
+
+	res = TEEC_RegisterSharedMemory(&ctx, &sharedMemory);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
 			res, err_origin);
-
-	memcpy(sharedMemory.buffer, "hello world!", sizeof("hello world!"));
 
 	/* Clear the TEEC_Operation struct */
 	memset(&op, 0, sizeof(op));
@@ -83,8 +94,8 @@ int main(void)
 	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_NONE,
 		         TEEC_NONE, TEEC_NONE);
 
-	op.params[0].memref.parent = &sharedMemory.buffer;
-	op.params[0].memref.size = bufferSize;
+	op.params[0].memref.parent = &sharedMemory;
+	op.params[0].memref.size = fileSize;
 	op.params[0].memref.offset = 0;
 	
 	/*
