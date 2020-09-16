@@ -45,7 +45,8 @@ int main(void)
 	TEEC_Session sess;
 	TEEC_Operation op;
 	TEEC_SharedMemory sharedMemory;
-	TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
+	// TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
+	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 	
 	printf("OP-TEE App Migrator\n");
