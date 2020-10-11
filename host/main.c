@@ -44,7 +44,7 @@ int main(void)
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
-	TEEC_SharedMemory sharedMemory;
+	TEEC_SharedMemory sharedMemoryFile, sharedMemoryPages;
 	// TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
@@ -66,16 +66,26 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	long fileSize = -1;
-	char * fileContents = read_file_contents("pagemap.img", &fileSize);
+	long fileSize = -1, pagedataSize = -1;
+	char * fileContents = read_file_contents("loop2", &fileSize);
+	char * pagedataContents = read_file_contents("pages-1.img", &pagedataSize);
 
-	if(fileSize && fileContents) {
+	if(fileSize && fileContents && pagedataSize && pagedataContents) {
 		// Setup shared memory
-		sharedMemory.size = fileSize;
-		sharedMemory.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-		sharedMemory.buffer = fileContents;
+		sharedMemoryFile.size = fileSize;
+		sharedMemoryFile.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+		sharedMemoryFile.buffer = fileContents;
 
-		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemory);
+		sharedMemoryPages.size = pagedataSize;
+		sharedMemoryPages.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+		sharedMemoryPages.buffer = pagedataContents;
+
+		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemoryFile);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+				res, err_origin);
+
+		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemoryPages);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
 				res, err_origin);
@@ -87,12 +97,16 @@ int main(void)
 		* Prepare the argument. Pass a value in the first parameter,
 		* the remaining three parameters are unused.
 		*/
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_NONE,
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
 					TEEC_NONE, TEEC_NONE);
 
-		op.params[0].memref.parent = &sharedMemory;
+		op.params[0].memref.parent = &sharedMemoryFile;
 		op.params[0].memref.size = fileSize;
 		op.params[0].memref.offset = 0;
+
+		op.params[1].memref.parent = &sharedMemoryPages;
+		op.params[1].memref.size = pagedataSize;
+		op.params[1].memref.offset = 0;
 
 		/*
 		* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
@@ -108,7 +122,8 @@ int main(void)
 
 
 		// Give the memory back
-		TEEC_ReleaseSharedMemory(&sharedMemory);
+		TEEC_ReleaseSharedMemory(&sharedMemoryFile);
+		TEEC_ReleaseSharedMemory(&sharedMemoryPages);
 	}
 
 	/*
