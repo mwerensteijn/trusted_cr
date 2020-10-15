@@ -118,7 +118,7 @@ int main(void)
 	sharedBuffer.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	sharedBuffer.buffer = dataBuffer;
 
-	sharedBufferInformation.size = sizeof(checkpoint_files);
+	sharedBufferInformation.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES;
 	sharedBufferInformation.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	sharedBufferInformation.buffer = checkpoint_files;
 
