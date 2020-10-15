@@ -36,16 +36,18 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-char * read_file_contents(const char * fileName, long * fileSize);
-
-
 enum checkpoint_file_types { 
-	CORE_FILE,				// core-*.img
+	CORE_FILE = 0,				// core-*.img
 	MM_FILE,				// mm-*.img
 	PAGEMAP_FILE,			// pagemap-*.img
 	PAGES_BINARY_FILE,		// pages-*.img
 	EXECUTABLE_BINARY_FILE	// The binary itself that is checkpointed
 };
+
+// Subtract the last enum from the first to determine the number of 
+// elements in the enum. By doing this we can use the enum values as indexes
+// to the checkpoint_files array. Example checkpoint_files[CORE_FILE].
+static const int CHECKPOINT_FILES = EXECUTABLE_BINARY_FILE - CORE_FILE + 1; 
 
 struct checkpoint_file {
 	enum checkpoint_file_types file_type;
@@ -53,13 +55,9 @@ struct checkpoint_file {
 	uint64_t file_size;
 };
 
-struct checkpoint {
-	struct checkpoint_file core_file;
-	struct checkpoint_file mm_file;
-	struct checkpoint_file pagemap_file;
-	struct checkpoint_file pages_binary_file;
-	struct checkpoint_file executable_binary_file;	
-};
+int get_file_size(const char * fileName);
+bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
+
 
 int main(void)
 {
@@ -67,27 +65,38 @@ int main(void)
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
-	TEEC_SharedMemory sharedMemoryFile, sharedMemoryPages;
+	TEEC_SharedMemory sharedBuffer, sharedBufferInformation;
 	// TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
-	// int file_index = 0;
-	// int last_buffer_index = 0;
-	// struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * 5);	
-	// checkpoint_files[0].file_type = CORE_FILE;
-	// checkpoint_files[0].buffer_index = 0;
-	// checkpoint_files[0].file_size = 1000;
-	// last_buffer_index += checkpoint_files[0].file_size;
+	printf("OP-TEE App Migrator\n\n");
 
+	printf("Total checkpoint size to migrate: ");
+	int total_buffer_size = 0;
+	total_buffer_size += get_file_size("mm-2956.txt");
+	total_buffer_size += get_file_size("core-2956.txt");
+	total_buffer_size += get_file_size("pages-1.img");
+	total_buffer_size += get_file_size("loop2");
+	total_buffer_size += get_file_size("pagemap-2956.txt");
+	printf("%d bytes\n", total_buffer_size);
 
-	// struct checkpoint_file {
-	// 	enum checkpoint_file_types file_type;
-	// 	uint64_t file_index;
-	// 	uint64_t file_size;
-	// };
+	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
+	char * dataBuffer = malloc(total_buffer_size + 1);
+	if(dataBuffer == NULL) {
+		printf("Unable to allocate %d bytes for the buffer.", total_buffer_size);
+		return -1;
+	}
 
-	printf("OP-TEE App Migrator\n");
+	printf("Loading checkpoint files into the buffer... ");
+	long buffer_index = 0;
+	insert_file_contents("core-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[CORE_FILE]);
+	insert_file_contents("mm-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[MM_FILE]);
+	insert_file_contents("pages-1.img", dataBuffer, &buffer_index, &checkpoint_files[PAGES_BINARY_FILE]);
+	insert_file_contents("loop2", dataBuffer, &buffer_index, &checkpoint_files[EXECUTABLE_BINARY_FILE]);
+	insert_file_contents("pagemap-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[PAGEMAP_FILE]);
+	printf("done!\n");
+
 
 	/* Initialize a context connecting us to the TEE */
 	res = TEEC_InitializeContext(NULL, &ctx);
@@ -104,65 +113,63 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	long fileSize = -1, pagedataSize = -1;
-	char * fileContents = read_file_contents("loop2", &fileSize);
-	char * pagedataContents = read_file_contents("pages-1.img", &pagedataSize);
+	// Setup shared memory
+	sharedBuffer.size = total_buffer_size;
+	sharedBuffer.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	sharedBuffer.buffer = dataBuffer;
 
-	if(fileSize && fileContents && pagedataSize && pagedataContents) {
-		// Setup shared memory
-		sharedMemoryFile.size = fileSize;
-		sharedMemoryFile.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-		sharedMemoryFile.buffer = fileContents;
+	sharedBufferInformation.size = sizeof(checkpoint_files);
+	sharedBufferInformation.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	sharedBufferInformation.buffer = checkpoint_files;
 
-		sharedMemoryPages.size = pagedataSize;
-		sharedMemoryPages.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-		sharedMemoryPages.buffer = pagedataContents;
+	res = TEEC_RegisterSharedMemory(&ctx, &sharedBuffer);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+			res, err_origin);
 
-		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemoryFile);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
-				res, err_origin);
+	res = TEEC_RegisterSharedMemory(&ctx, &sharedBufferInformation);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+			res, err_origin);
 
-		res = TEEC_RegisterSharedMemory(&ctx, &sharedMemoryPages);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
-				res, err_origin);
+	/* Clear the TEEC_Operation struct */
+	memset(&op, 0, sizeof(op));
 
-		/* Clear the TEEC_Operation struct */
-		memset(&op, 0, sizeof(op));
+	/*
+	* Prepare the argument. Pass a value in the first parameter,
+	* the remaining three parameters are unused.
+	*/
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
+				TEEC_NONE, TEEC_NONE);
 
-		/*
-		* Prepare the argument. Pass a value in the first parameter,
-		* the remaining three parameters are unused.
-		*/
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
-					TEEC_NONE, TEEC_NONE);
+	op.params[0].memref.parent = &sharedBuffer;
+	op.params[0].memref.size = sharedBuffer.size;
+	op.params[0].memref.offset = 0;
 
-		op.params[0].memref.parent = &sharedMemoryFile;
-		op.params[0].memref.size = fileSize;
-		op.params[0].memref.offset = 0;
+	op.params[1].memref.parent = &sharedBufferInformation;
+	op.params[1].memref.size = sharedBufferInformation.size;
+	op.params[1].memref.offset = 0;
 
-		op.params[1].memref.parent = &sharedMemoryPages;
-		op.params[1].memref.size = pagedataSize;
-		op.params[1].memref.offset = 0;
+	/*
+	* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
+	* called.
+	*/
+	printf("\nInvoking TA\n");
+	res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
 
-		/*
-		* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
-		* called.
-		*/
-		printf("Invoking TA with message: \"%s\"\n", (char *) op.params[0].memref.parent->buffer);
-		res = TEEC_InvokeCommand(&sess, TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING, &op,
-					&err_origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-				res, err_origin);
-		printf("TA changed message to \"%s\"\n", (char *) op.params[0].memref.parent->buffer);
+	// As the memory buffers where shared, the data can be changed in the secure world.
+	// That data can again be retrieved in op.params[0].memref.parent->buffer);
 
-
-		// Give the memory back
-		TEEC_ReleaseSharedMemory(&sharedMemoryFile);
-		TEEC_ReleaseSharedMemory(&sharedMemoryPages);
-	}
+	// Give the memory back
+	TEEC_ReleaseSharedMemory(&sharedBuffer);
+	TEEC_ReleaseSharedMemory(&sharedBufferInformation);
+	free(dataBuffer);
+	free(checkpoint_files);
 
 	/*
 	 * We're done with the TA, close the session and
@@ -171,38 +178,55 @@ int main(void)
 	 * The TA will print "Goodbye!" in the log when the
 	 * session is closed.
 	 */
-
 	TEEC_CloseSession(&sess);
-
 	TEEC_FinalizeContext(&ctx);
 
 	return 0;
 }
 
-char * read_file_contents(const char * fileName, long * fileSize) {
-	char * message = NULL;
+int get_file_size(const char * fileName) {
 	FILE *f = fopen(fileName, "rb");
+
+	int fileSize = 0;
 
 	if(f) {
 		// Determine file size
 		fseek(f, 0, SEEK_END);
-		*fileSize = ftell(f);
-		fseek(f, 0, SEEK_SET);
-
-		message = malloc(*fileSize + 1);
-		if(message) {
-			fread(message, 1, *fileSize, f);
-			message[*fileSize] = 0;
-		} else {
-			// Unable to malloc.
-			printf("Unable to malloc %ld bytes for file contents.\n", *fileSize + 1);
-			*fileSize = -1;
-		}
-
+		fileSize = ftell(f);
 		fclose(f);
 	} else {
 		printf("Unable to read file: %s\n", fileName);
 	}
 
-	return message;
+	return fileSize;
+}
+
+bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file) {
+	FILE *f = fopen(fileName, "rb");
+
+	if(f) {
+		// Determine file size
+		fseek(f, 0, SEEK_END);
+		checkpoint_file->file_size = ftell(f) + 1;
+		fseek(f, 0, SEEK_SET);
+
+		if(buffer) {
+			// fread(buffer, 1, buffer_index + checkpoint_file->file_size, f);
+			buffer[checkpoint_file->file_size] = 0;
+			checkpoint_file->buffer_index = *buffer_index;
+		} else {
+			// Unable to malloc.
+			printf("Unable to malloc %ld bytes for file contents.\n", checkpoint_file->file_size);
+			checkpoint_file->file_size = -1;
+			return false;
+		}
+
+		fclose(f);
+	} else {
+		printf("Unable to read file: %s\n", fileName);
+		return false;
+	}
+
+	buffer_index += checkpoint_file->file_size;
+	return true;
 }
