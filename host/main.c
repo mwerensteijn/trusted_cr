@@ -38,6 +38,29 @@
 
 char * read_file_contents(const char * fileName, long * fileSize);
 
+
+enum checkpoint_file_types { 
+	CORE_FILE,				// core-*.img
+	MM_FILE,				// mm-*.img
+	PAGEMAP_FILE,			// pagemap-*.img
+	PAGES_BINARY_FILE,		// pages-*.img
+	EXECUTABLE_BINARY_FILE	// The binary itself that is checkpointed
+};
+
+struct checkpoint_file {
+	enum checkpoint_file_types file_type;
+	uint64_t buffer_index;
+	uint64_t file_size;
+};
+
+struct checkpoint {
+	struct checkpoint_file core_file;
+	struct checkpoint_file mm_file;
+	struct checkpoint_file pagemap_file;
+	struct checkpoint_file pages_binary_file;
+	struct checkpoint_file executable_binary_file;	
+};
+
 int main(void)
 {
 	TEEC_Result res;
@@ -48,7 +71,22 @@ int main(void)
 	// TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
-	
+
+	// int file_index = 0;
+	// int last_buffer_index = 0;
+	// struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * 5);	
+	// checkpoint_files[0].file_type = CORE_FILE;
+	// checkpoint_files[0].buffer_index = 0;
+	// checkpoint_files[0].file_size = 1000;
+	// last_buffer_index += checkpoint_files[0].file_size;
+
+
+	// struct checkpoint_file {
+	// 	enum checkpoint_file_types file_type;
+	// 	uint64_t file_index;
+	// 	uint64_t file_size;
+	// };
+
 	printf("OP-TEE App Migrator\n");
 
 	/* Initialize a context connecting us to the TEE */
