@@ -154,11 +154,12 @@ int main(void)
 	op.params[1].memref.size = sharedBufferInformation.size;
 	op.params[1].memref.offset = 0;
 
+#ifdef DEBUG
 	struct checkpoint_file * checkpoint_file_var = checkpoint_files;
-
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		printf("checkpoint file: type %lu - index %lu - size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
 	}
+#endif
 
 	/*
 	* TA_OPTEE_APP_MIGRATOR_CMD_INC_VALUE is the actual function in the TA to be
@@ -221,8 +222,8 @@ bool insert_file_contents(const char * fileName, char * buffer, long * buffer_in
 		fseek(f, 0, SEEK_SET);
 
 		if(buffer) {
-			fread(buffer, 1, buffer_index + checkpoint_file->file_size, f);
-			buffer[checkpoint_file->file_size] = 0;
+			fread(buffer + *buffer_index, 1, checkpoint_file->file_size, f);
+			buffer[*buffer_index + checkpoint_file->file_size] = 0;
 			checkpoint_file->buffer_index = *buffer_index;
 		} else {
 			// Unable to malloc.
