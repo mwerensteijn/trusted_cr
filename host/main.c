@@ -36,6 +36,8 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
+typedef uintptr_t vaddr_t;
+
 enum checkpoint_file_types { 
 	CORE_FILE = 0,				// core-*.img
 	MM_FILE,				// mm-*.img
@@ -49,10 +51,29 @@ enum checkpoint_file_types {
 // to the checkpoint_files array. Example checkpoint_files[CORE_FILE].
 static const int CHECKPOINT_FILES = EXECUTABLE_BINARY_FILE - CORE_FILE + 1; 
 
+struct criu_checkpoint_regs {
+	uint64_t vregs[64];
+	uint64_t regs[31];
+	uint64_t entry_addr;
+	uint64_t stack_addr;
+	uint64_t tpidr_el0_addr;
+};
+
 struct checkpoint_file {
 	enum checkpoint_file_types file_type;
 	uint64_t buffer_index;
 	uint64_t file_size;
+};
+
+struct 	 {
+	vaddr_t vaddr_start;
+	unsigned long nr_pages;
+	uint8_t flags;
+};
+
+struct criu_checkpoint_dirty_pages {
+	uint32_t dirty_page_count;
+	uint32_t offset;
 };
 
 int get_file_size(const char * fileName);
@@ -175,6 +196,20 @@ int main(void)
 
 	// As the memory buffers where shared, the data can be changed in the secure world.
 	// That data can again be retrieved in op.params[0].memref.parent->buffer);
+	if(op.params[1].memref.size > sizeof(struct checkpoint_file));
+	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+
+	printf("Got an updated PC of: %p\n", checkpoint->entry_addr);
+	printf("Got an updated SP of: %p\n", checkpoint->stack_addr);
+	printf("Got an updated TPIDR_EL0 of: %p\n", checkpoint->tpidr_el0_addr);
+
+	for(int i = 0; i < 31; i++) {
+		// printf("regs[%d]: %p\n", i, checkpoint->regs[i]);
+	}
+
+	for(int i = 0; i < 64; i++) {
+		// printf("vregs[%d]: %p\n", i, checkpoint->vregs[i]);
+	}
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&sharedBuffer);
