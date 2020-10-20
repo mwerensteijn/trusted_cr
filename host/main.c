@@ -65,7 +65,7 @@ struct checkpoint_file {
 	uint64_t file_size;
 };
 
-struct 	 {
+struct criu_pagemap_entry {
 	vaddr_t vaddr_start;
 	unsigned long nr_pages;
 	uint8_t flags;
@@ -197,19 +197,54 @@ int main(void)
 	// As the memory buffers where shared, the data can be changed in the secure world.
 	// That data can again be retrieved in op.params[0].memref.parent->buffer);
 	if(op.params[1].memref.size > sizeof(struct checkpoint_file));
+	long index = 0;
 	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+	index += sizeof(struct criu_checkpoint_regs);
 
 	printf("Got an updated PC of: %p\n", checkpoint->entry_addr);
 	printf("Got an updated SP of: %p\n", checkpoint->stack_addr);
-	printf("Got an updated TPIDR_EL0 of: %p\n", checkpoint->tpidr_el0_addr);
+	printf("Got an updated TPIDR_EL0 of: %llu\n", checkpoint->tpidr_el0_addr);
 
+	printf("\nregs:\n");
 	for(int i = 0; i < 31; i++) {
-		// printf("regs[%d]: %p\n", i, checkpoint->regs[i]);
+		printf("%p,\n", checkpoint->regs[i]);
 	}
 
+	printf("\nvregs:\n");
 	for(int i = 0; i < 64; i++) {
-		// printf("vregs[%d]: %p\n", i, checkpoint->vregs[i]);
+		printf("%llu,\n", checkpoint->vregs[i]);
 	}
+
+	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + index;
+	index += sizeof(struct criu_checkpoint_dirty_pages);
+
+
+	FILE *fp;
+
+	fp = fopen("newpagedata.txt", "w+");
+
+	printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+	struct criu_pagemap_entry * pagemap_entry = NULL;
+	int off = 0;
+	for(int i = 0; i < dirty_pages_info->dirty_page_count; i++) {
+		pagemap_entry = op.params[0].memref.parent->buffer + index;
+		index += sizeof(struct criu_pagemap_entry);
+		printf("Dirty page at: %p - entries: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages);
+
+
+			// fprintf(fp, "This is testing for fprintf...\n");
+			// fputs("This is testing for fputs...\n", fp);
+			
+		for(int y = 0; y < (4096*pagemap_entry->nr_pages); y++) {
+			char * c = op.params[0].memref.parent->buffer + dirty_pages_info->offset + y + off;
+			fputc(*c, fp);
+		}
+
+		off += 4096 * pagemap_entry->nr_pages;
+	}
+
+
+	fclose(fp);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&sharedBuffer);
