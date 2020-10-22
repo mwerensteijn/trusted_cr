@@ -220,32 +220,52 @@ int main(void)
 	index += sizeof(struct criu_checkpoint_dirty_pages);
 
 
-	FILE *fp;
+	// FILE *fp = fopen("pages-1.new.img", "w+");
+	// FILE *f  = fopen("pages-1.img", "rb");
 
-	fp = fopen("newpagedata.txt", "w+");
-
-	printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-	struct criu_pagemap_entry * pagemap_entry = NULL;
-	int off = 0;
-	for(int i = 0; i < dirty_pages_info->dirty_page_count; i++) {
-		pagemap_entry = op.params[0].memref.parent->buffer + index;
-		index += sizeof(struct criu_pagemap_entry);
-		printf("Dirty page at: %p - entries: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages);
+	// printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+	// struct criu_pagemap_entry * pagemap_entry = NULL;
 
 
-			// fprintf(fp, "This is testing for fprintf...\n");
-			// fputs("This is testing for fputs...\n", fp);
-			
-		for(int y = 0; y < (4096*pagemap_entry->nr_pages); y++) {
-			char * c = op.params[0].memref.parent->buffer + dirty_pages_info->offset + y + off;
-			fputc(*c, fp);
-		}
+	// if(f) {
+	// 	// Determine file size
+	// 	fseek(f, 0, SEEK_END);
+	// 	int page_count = ftell(f) / 4096;
+	// 	fseek(f, 0, SEEK_SET);
 
-		off += 4096 * pagemap_entry->nr_pages;
-	}
+	// 	printf("size: %d\n", page_count);
+	// 	char buffer[4096];
 
+	// 	for(int i = 0; i < page_count; i++) {
+	// 		// Read from the original pages-1.img file
+	// 		fread(buffer, 1, 4096, f);
 
-	fclose(fp);
+	// 		// Track if this page is updated
+	// 		bool dirty_page = false;
+
+	// 		// Check every dirty page for a match
+	// 		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+	// 			pagemap_entry = op.params[0].memref.parent->buffer + index + (sizeof(struct criu_pagemap_entry) * y) ;
+	// 			if(pagemap_entry->file_page_index == i) {
+	// 				printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
+	// 				fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + pagemap_entry->file_page_index * 4096, 1, 4096 + (pagemap_entry->nr_pages - 1) * 4096, fp);
+	// 				i += pagemap_entry->nr_pages - 1;
+	// 				dirty_page = true;
+	// 				break;
+	// 			}
+	// 		}
+
+	// 		// The page is not dirty, so write the original
+	// 		if(!dirty_page) {
+	// 			fwrite(buffer, 1, 4096, fp);
+	// 		}
+	// 	}
+
+	// 	fclose(f);
+	// }
+
+	// if(fp)
+	// 	fclose(fp);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&sharedBuffer);
