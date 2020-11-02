@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "jsmn.h"
 
 /* OP-TEE TEE client API (built by optee_client) */
 #include <tee_client_api.h>
@@ -79,7 +80,7 @@ struct criu_checkpoint_dirty_pages {
 
 int get_file_size(const char * fileName);
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
-
+void print_substring(char * buffer, int start_index, int end_index);
 
 int main(void)
 {
@@ -241,6 +242,84 @@ int main(void)
 		fclose(fp);
 	}
 
+	// FILE *fpp = fopen("modified_core.txt", "w+");
+	// if(fpp) {
+	// 	// fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fpp);
+
+	// 	// Initialize the JSMN json parser
+	// 	jsmn_parser parser;
+	// 	jsmn_init(&parser);
+
+	// 	// First only determine the number of tokens.
+	// 	int items = jsmn_parse(&parser, json, strlen(json), NULL, 128);
+
+	// 	jsmntok_t tokens[items];
+		
+	// 	// Reset position in stream
+	// 	jsmn_init(&parser);
+	// 	int left = jsmn_parse(&parser, json, strlen(json), tokens, items);
+
+	// 	// Invalid file.
+	// 	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+	// 		printf("CRIU: INVALID JSON\n");
+	// 		return -1;
+	// 	}
+
+	// 	// TLS indexes
+	// 	int before_tls_value = 0;
+	// 	int  after_tls_value = 0;
+
+	// 	// Regs indexes
+	// 	int before_regs_value = 0;
+	// 	int  after_regs_value = 0;
+
+	// 	// SP indexes
+	// 	int before_sp_value = 0;
+	// 	int  after_sp_value = 0;
+
+	// 	// PC indexes
+	// 	int before_pc_value = 0;
+	// 	int  after_pc_value = 0;
+
+	// 	// Vregs indexes
+	// 	int before_vregs_value = 0;
+	// 	int  after_vregs_value = 0;
+
+	// 	// Parse the JSON version of the core checkpoint file (example core-2956.img)
+	// 	for(int i = 1; i < items; i++) {
+	// 		if (jsoneq(json, &tokens[i], "tls") == 0) { 
+	// 			before_tls_value = tokens[i+1].start;
+	// 			after_tls_value = tokens[i+1].end;
+	// 		} else if (jsoneq(json, &tokens[i], "regs") == 0) { 
+	// 			before_regs_value = tokens[i+1].start;
+	// 			after_regs_value = tokens[i+1].end;
+	// 		} else if (jsoneq(json, &tokens[i], "sp") == 0) {
+	// 			before_sp_value = tokens[i+1].start;
+	// 			after_sp_value = tokens[i+1].end;
+	// 		} else if (jsoneq(json, &tokens[i], "pc") == 0) {
+	// 			before_pc_value = tokens[i+1].start;
+	// 			after_pc_value = tokens[i+1].end;
+	// 		} else if (jsoneq(json, &tokens[i], "vregs") == 0) {
+	// 			before_vregs_value = tokens[i+1].start;
+	// 			after_vregs_value = tokens[i+1].end;
+	// 		}
+	// 	}
+
+	// 	print_substring(json, 0, before_tls_value);
+	// 	printf("0xtls"); // write tpidr_el0
+	// 	print_substring(json, after_tls_value, before_regs_value);
+	// 	printf("[ print all regs... ]"); // write regs
+	// 	print_substring(json, after_regs_value, before_sp_value);
+	// 	printf("0xsp"); // write sp
+	// 	print_substring(json, after_sp_value, before_pc_value);
+	// 	printf("0xpc"); // write pc
+	// 	print_substring(json, after_pc_value, before_vregs_value);
+	// 	printf("[ print all vregs... ]"); // write vregs
+	// 	print_substring(json, after_vregs_value, strlen(json));
+
+	// 	fclose(fpp);
+	// }
+
 	// if(f) {
 	// 	// Determine file size
 	// 	fseek(f, 0, SEEK_END);
@@ -345,4 +424,11 @@ bool insert_file_contents(const char * fileName, char * buffer, long * buffer_in
 
 	*buffer_index += checkpoint_file->file_size;
 	return true;
+}
+
+void print_substring(char * buffer, int start_index, int end_index) {
+	char backup = buffer[end_index];
+	buffer[end_index] = 0;
+	printf(buffer + start_index);
+	buffer[end_index] = backup;	
 }
