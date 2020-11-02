@@ -125,13 +125,15 @@ int main(void)
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
-	TEEC_SharedMemory sharedBuffer, sharedBufferInformation;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
 	
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
 	printf("OP-TEE App Migrator\n\n");
 
+	// To hold the checkpoint file info
+	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
 	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
 		"core-3017.txt",
 		"mm-3017.txt",
@@ -139,39 +141,44 @@ int main(void)
 		"pages-1.img",
 		"loop2"
 	};
-
-	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
 	
-	int total_buffer_size = 0;
+	// Total size of the shared buffer 1, which contains all checkpoint files together.
+	int shared_buffer_1_size = 0;
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
 		read_file(&files[i]);
 
-		// printf("size of %s is %d\n", files[i].filename, files[i].file_size);
-		total_buffer_size += files[i].file_size;
+		// Increase the buffer size
+		shared_buffer_1_size += files[i].file_size;
 	}
 
-	printf("Total checkpoint size to migrate: ");
-	printf("%d bytes\n", total_buffer_size);
+	// Notice the ++? Reserve another byte for the \0 character
+	printf("Total checkpoint size to migrate is %d bytes\n", ++shared_buffer_1_size);
 
-	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
-	char * dataBuffer = malloc(total_buffer_size + 1);
-	if(dataBuffer == NULL) {
-		printf("Unable to allocate %d bytes for the buffer.", total_buffer_size);
+	// Allocate space for shared buffer 1
+	char * shared_buffer_1 = malloc(shared_buffer_1_size);
+	if(shared_buffer_1 == NULL) {
+		printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
 		return -1;
 	}
 
 	printf("Loading checkpoint files into the buffer... ");
-	long buffer_index = 0;
+	long shared_buffer_1_index = 0;
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		memcpy(dataBuffer + buffer_index, files[i].buffer, files[i].file_size);
-		files[i].buffer_index = buffer_index;
-		dataBuffer[buffer_index + files[i].file_size] = 0;
-		buffer_index += files[i].file_size;
+		// First copy the data from the checkpoint file buffer to shared buffer 1 at the correct index
+		memcpy(shared_buffer_1 + shared_buffer_1_index, files[i].buffer, files[i].file_size);
+		// Store the index so we can send that info later in shared buffer 2
+		files[i].buffer_index = shared_buffer_1_index;
+		// Will be overwritten by the next memcpy, except for the last entry
+		shared_buffer_1[shared_buffer_1_index + files[i].file_size] = 0;
+
+		shared_buffer_1_index += files[i].file_size;
 	}
 	printf("done!\n");
 
-	// Setting the file types
+	// Setup the structs that will go into shared buffer 2
+	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
 		checkpoint_files[i].file_size = files[i].file_size;
@@ -193,21 +200,22 @@ int main(void)
 		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	// Setup shared memory
-	sharedBuffer.size = total_buffer_size;
-	sharedBuffer.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-	sharedBuffer.buffer = dataBuffer;
+	// Setup shared memory buffer 1
+	shared_memory_1.size = shared_buffer_1_size;
+	shared_memory_1.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_1.buffer = shared_buffer_1;
 
-	sharedBufferInformation.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES;
-	sharedBufferInformation.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-	sharedBufferInformation.buffer = checkpoint_files;
-
-	res = TEEC_RegisterSharedMemory(&ctx, &sharedBuffer);
+	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	res = TEEC_RegisterSharedMemory(&ctx, &sharedBufferInformation);
+	// Setup shared memory buffer 2
+	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES;
+	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_2.buffer = checkpoint_files;
+
+	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
 			res, err_origin);
@@ -216,24 +224,23 @@ int main(void)
 	memset(&op, 0, sizeof(op));
 
 	/*
-	* Prepare the argument. Pass a value in the first parameter,
-	* the remaining three parameters are unused.
+	* Prepare the two arguments that will be passed to the secure world, which are two shared memory buffers.
 	*/
 	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
 				TEEC_NONE, TEEC_NONE);
 
-	op.params[0].memref.parent = &sharedBuffer;
-	op.params[0].memref.size = sharedBuffer.size;
+	op.params[0].memref.parent = &shared_memory_1;
+	op.params[0].memref.size = shared_memory_1.size;
 	op.params[0].memref.offset = 0;
 
-	op.params[1].memref.parent = &sharedBufferInformation;
-	op.params[1].memref.size = sharedBufferInformation.size;
+	op.params[1].memref.parent = &shared_memory_2;
+	op.params[1].memref.size = shared_memory_2.size;
 	op.params[1].memref.offset = 0;
 
 #ifdef DEBUG
 	struct checkpoint_file * checkpoint_file_var = checkpoint_files;
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		printf("checkpoint file: type %lu - index %lu - size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
+		printf("checkpoint file: type %lu - index %lu\t- size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
 	}
 #endif
 
@@ -414,9 +421,9 @@ int main(void)
 	// 	fclose(fp);
 
 	// Give the memory back
-	TEEC_ReleaseSharedMemory(&sharedBuffer);
-	TEEC_ReleaseSharedMemory(&sharedBufferInformation);
-	free(dataBuffer);
+	TEEC_ReleaseSharedMemory(&shared_memory_1);
+	TEEC_ReleaseSharedMemory(&shared_memory_2);
+	free(shared_buffer_1);
 	free(checkpoint_files);
 
 	for(int i = 0; i < 5; i++) {
