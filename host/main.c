@@ -78,9 +78,34 @@ struct criu_checkpoint_dirty_pages {
 	uint32_t offset;
 };
 
-int get_file_size(const char * fileName);
+struct checkpoint_file_data {
+	char * filename;
+	void * buffer;
+	long file_size;
+};
+
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
 void print_substring(char * buffer, int start_index, int end_index);
+
+bool read_file(struct checkpoint_file_data * c_file) {
+	FILE *f = fopen(c_file->filename, "rb");
+
+	if(f) {
+		// Determine file size
+		fseek(f, 0, SEEK_END);
+		c_file->file_size = ftell(f);
+		fseek(f, 0, SEEK_SET);
+
+		c_file->buffer = malloc(c_file->file_size);
+
+		fclose(f);
+	} else {
+		printf("Unable to read file: %s\n", c_file->filename);
+		return false;
+	}
+
+	return true;
+}
 
 int main(void)
 {
@@ -95,13 +120,28 @@ int main(void)
 
 	printf("OP-TEE App Migrator\n\n");
 
-	printf("Total checkpoint size to migrate: ");
+	char mm_filename[]      = "mm-3017.txt";
+	char core_filename[]    = "core-3017.txt";
+	char pages_filename[]   = "pages-1.img";
+	char binary_filename[]  = "loop2";
+	char pagemap_filename[] = "pagemap-3017.txt";
+
+	struct checkpoint_file_data files[5] = {
+		{ .filename = mm_filename },
+		{ .filename = core_filename },
+		{ .filename = pages_filename },
+		{ .filename = binary_filename },
+		{ .filename = pagemap_filename }
+	};
+	
 	int total_buffer_size = 0;
-	total_buffer_size += get_file_size("mm-3017.txt");
-	total_buffer_size += get_file_size("core-3017.txt");
-	total_buffer_size += get_file_size("pages-1.img");
-	total_buffer_size += get_file_size("loop2");
-	total_buffer_size += get_file_size("pagemap-3017.txt");
+	for(int i = 0; i < 5; i++) {
+		read_file(&files[i]);
+		printf("size of %s is %d\n", files[i].filename, files[i].file_size);
+		total_buffer_size += files[i].file_size;
+	}
+
+	printf("Total checkpoint size to migrate: ");
 	printf("%d bytes\n", total_buffer_size);
 
 	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
@@ -377,23 +417,6 @@ int main(void)
 	TEEC_FinalizeContext(&ctx);
 
 	return 0;
-}
-
-int get_file_size(const char * fileName) {
-	FILE *f = fopen(fileName, "rb");
-
-	int fileSize = 0;
-
-	if(f) {
-		// Determine file size
-		fseek(f, 0, SEEK_END);
-		fileSize = ftell(f);
-		fclose(f);
-	} else {
-		printf("Unable to read file: %s\n", fileName);
-	}
-
-	return fileSize;
 }
 
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file) {
