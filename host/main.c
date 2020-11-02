@@ -406,6 +406,10 @@ int main(void)
 	free(dataBuffer);
 	free(checkpoint_files);
 
+	for(int i = 0; i < 5; i++) {
+		free(files[i].buffer);
+	}
+
 	/*
 	 * We're done with the TA, close the session and
 	 * destroy the context.
