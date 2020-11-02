@@ -96,11 +96,11 @@ int main(void)
 
 	printf("Total checkpoint size to migrate: ");
 	int total_buffer_size = 0;
-	total_buffer_size += get_file_size("mm-2956.txt");
-	total_buffer_size += get_file_size("core-2956.txt");
+	total_buffer_size += get_file_size("mm-3017.txt");
+	total_buffer_size += get_file_size("core-3017.txt");
 	total_buffer_size += get_file_size("pages-1.img");
 	total_buffer_size += get_file_size("loop2");
-	total_buffer_size += get_file_size("pagemap-2956.txt");
+	total_buffer_size += get_file_size("pagemap-3017.txt");
 	printf("%d bytes\n", total_buffer_size);
 
 	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
@@ -112,11 +112,11 @@ int main(void)
 
 	printf("Loading checkpoint files into the buffer... ");
 	long buffer_index = 0;
-	insert_file_contents("core-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[CORE_FILE]);
-	insert_file_contents("mm-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[MM_FILE]);
+	insert_file_contents("core-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[CORE_FILE]);
+	insert_file_contents("mm-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[MM_FILE]);
 	insert_file_contents("pages-1.img", dataBuffer, &buffer_index, &checkpoint_files[PAGES_BINARY_FILE]);
 	insert_file_contents("loop2", dataBuffer, &buffer_index, &checkpoint_files[EXECUTABLE_BINARY_FILE]);
-	insert_file_contents("pagemap-2956.txt", dataBuffer, &buffer_index, &checkpoint_files[PAGEMAP_FILE]);
+	insert_file_contents("pagemap-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[PAGEMAP_FILE]);
 	printf("done!\n");
 
 	// Setting the file types
