@@ -89,35 +89,10 @@ struct checkpoint_file_data {
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
 void print_substring(char * buffer, int start_index, int end_index);
 
-bool read_file(struct checkpoint_file_data * c_file) {
-	FILE *f = fopen(c_file->filename, "rb");
 
-	if(f) {
-		// Determine file size
-		fseek(f, 0, SEEK_END);
-		c_file->file_size = ftell(f);
-		fseek(f, 0, SEEK_SET);
+static int jsoneq(const char *json, jsmntok_t *tok, const char *s);
 
-		c_file->buffer = malloc(c_file->file_size + 1);
-
-		if(c_file->buffer) {
-			fread(c_file->buffer, 1, c_file->file_size, f);
-			c_file->buffer[c_file->file_size] = 0;
-		} else {
-			// Unable to malloc.
-			printf("Unable to malloc %ld bytes for file %s.\n", c_file->file_size, c_file->filename);
-			c_file->file_size = -1;
-			return false;
-		}
-
-		fclose(f);
-	} else {
-		printf("Unable to read file: %s\n", c_file->filename);
-		return false;
-	}
-
-	return true;
-}
+bool read_file(struct checkpoint_file_data * c_file);
 
 int main(void)
 {
@@ -257,128 +232,146 @@ int main(void)
 	printf("TA returned from secure world\n");
 
 	// As the memory buffers where shared, the data can be changed in the secure world.
-	// That data can again be retrieved in op.params[0].memref.parent->buffer);
-	if(op.params[1].memref.size > sizeof(struct checkpoint_file));
-	long index = 0;
+	// After running the checkpoint in the secure world, the secure world checkpoints back
+	// and puts the updated checkpoint values in the parameters.
+	
+	// TODO: implement checking the parameter for correct lengths
+	// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
+
+	long shared_buffer_2_index = 0;
 	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
-	index += sizeof(struct criu_checkpoint_regs);
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
-	printf("Got an updated PC of: \"%p\"\n", checkpoint->entry_addr);
-	printf("Got an updated SP of: \"%p\"\n", checkpoint->stack_addr);
-	printf("Got an updated TPIDR_EL0 of: %llu\n", checkpoint->tpidr_el0_addr);
+	FILE *fpp = fopen("modified_core.txt", "w+");
+	if(fpp) {
+		// fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fpp);
 
-	printf("\nregs:\n");
-	for(int i = 0; i < 31; i++) {
-		if(checkpoint->regs[i])
-			printf("\"%p\",\n", checkpoint->regs[i]);
-		else
-			printf("\"0x0\",\n");
-	}
+		char * buffer = files[CORE_FILE].buffer;
+		long file_size = files[CORE_FILE].file_size;
 
-	printf("\nvregs:\n");
-	for(int i = 0; i < 64; i++) {
-		printf("%llu,\n", checkpoint->vregs[i]);
-	}
+		// Initialize the JSMN json parser
+		jsmn_parser parser;
+		jsmn_init(&parser);
 
-	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + index;
-	index += sizeof(struct criu_checkpoint_dirty_pages);
+		// First only determine the number of tokens.
+		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
 
+		jsmntok_t tokens[items];
+		
+		// Reset position in stream
+		jsmn_init(&parser);
+		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
 
-	FILE *fp = fopen("pages-1.new.img", "w+");
-	// FILE *f  = fopen("pages-1.img", "rb");
-
-	printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-	struct criu_pagemap_entry * pagemap_entry = NULL;
-
-	if(fp) {
-		long entry_page_offset = 0;
-		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-			pagemap_entry = op.params[0].memref.parent->buffer + index + (sizeof(struct criu_pagemap_entry) * y) ;
-			printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
-			fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fp);
-			entry_page_offset += pagemap_entry->nr_pages;
+		// Invalid file.
+		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+			printf("CRIU: INVALID JSON\n");
+			return -1;
 		}
 
-		fclose(fp);
+		// TLS indexes
+		int before_tls_value = 0;
+		int  after_tls_value = 0;
+
+		// Regs indexes
+		int before_regs_value = 0;
+		int  after_regs_value = 0;
+
+		// SP indexes
+		int before_sp_value = 0;
+		int  after_sp_value = 0;
+
+		// PC indexes
+		int before_pc_value = 0;
+		int  after_pc_value = 0;
+
+		// Vregs indexes
+		int before_vregs_value = 0;
+		int  after_vregs_value = 0;
+
+		// Parse the JSON version of the core checkpoint file (example core-2956.img)
+		for(int i = 1; i < items; i++) {
+			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
+				before_tls_value = tokens[i+1].start;
+				after_tls_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "regs") == 0) { 
+				before_regs_value = tokens[i+1].start;
+				after_regs_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "sp") == 0) {
+				before_sp_value = tokens[i+1].start;
+				after_sp_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
+				before_pc_value = tokens[i+1].start;
+				after_pc_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
+				before_vregs_value = tokens[i+1].start;
+				after_vregs_value = tokens[i+1].end;
+			}
+		}
+
+		print_substring(buffer, 0, before_tls_value);
+
+		// Write tpidr_el0
+		printf("%llu", checkpoint->tpidr_el0_addr); 
+		print_substring(buffer, after_tls_value, before_regs_value);
+
+		// Write all updated registers
+		putchar('[');
+		for(int i = 0; i < 31; i++) {
+			if(checkpoint->regs[i])
+				printf("\"%p\"", checkpoint->regs[i]);
+			else
+				printf("\"0x0\"");
+
+			if(i != 30)
+				printf(",\n");
+		}
+		putchar(']');
+		print_substring(buffer, after_regs_value, before_sp_value);
+
+		// Write updated stack pointer
+		printf("%p", checkpoint->stack_addr);
+		print_substring(buffer, after_sp_value, before_pc_value);
+
+		// Write updated program counter
+		printf("%p", checkpoint->entry_addr);
+		print_substring(buffer, after_pc_value, before_vregs_value);
+
+		// Write all updated vregs
+		putchar('[');
+		for(int i = 0; i < 64; i++) {
+			printf("%llu", checkpoint->vregs[i]);
+
+			if(i != 63)
+				printf(",\n");
+		}
+		putchar(']');
+		print_substring(buffer, after_vregs_value, file_size);
+
+		fclose(fpp);
 	}
 
-	// FILE *fpp = fopen("modified_core.txt", "w+");
-	// if(fpp) {
-	// 	// fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fpp);
+	// struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
+	// shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	// 	// Initialize the JSMN json parser
-	// 	jsmn_parser parser;
-	// 	jsmn_init(&parser);
+	// FILE *fp = fopen("pages-1.new.img", "w+");
+	// // FILE *f  = fopen("pages-1.img", "rb");
 
-	// 	// First only determine the number of tokens.
-	// 	int items = jsmn_parse(&parser, json, strlen(json), NULL, 128);
+	// printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+	// struct criu_pagemap_entry * pagemap_entry = NULL;
 
-	// 	jsmntok_t tokens[items];
-		
-	// 	// Reset position in stream
-	// 	jsmn_init(&parser);
-	// 	int left = jsmn_parse(&parser, json, strlen(json), tokens, items);
-
-	// 	// Invalid file.
-	// 	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-	// 		printf("CRIU: INVALID JSON\n");
-	// 		return -1;
+	// if(fp) {
+	// 	long entry_page_offset = 0;
+	// 	for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+	// 		pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+	// 		printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
+	// 		fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fp);
+	// 		entry_page_offset += pagemap_entry->nr_pages;
 	// 	}
 
-	// 	// TLS indexes
-	// 	int before_tls_value = 0;
-	// 	int  after_tls_value = 0;
-
-	// 	// Regs indexes
-	// 	int before_regs_value = 0;
-	// 	int  after_regs_value = 0;
-
-	// 	// SP indexes
-	// 	int before_sp_value = 0;
-	// 	int  after_sp_value = 0;
-
-	// 	// PC indexes
-	// 	int before_pc_value = 0;
-	// 	int  after_pc_value = 0;
-
-	// 	// Vregs indexes
-	// 	int before_vregs_value = 0;
-	// 	int  after_vregs_value = 0;
-
-	// 	// Parse the JSON version of the core checkpoint file (example core-2956.img)
-	// 	for(int i = 1; i < items; i++) {
-	// 		if (jsoneq(json, &tokens[i], "tls") == 0) { 
-	// 			before_tls_value = tokens[i+1].start;
-	// 			after_tls_value = tokens[i+1].end;
-	// 		} else if (jsoneq(json, &tokens[i], "regs") == 0) { 
-	// 			before_regs_value = tokens[i+1].start;
-	// 			after_regs_value = tokens[i+1].end;
-	// 		} else if (jsoneq(json, &tokens[i], "sp") == 0) {
-	// 			before_sp_value = tokens[i+1].start;
-	// 			after_sp_value = tokens[i+1].end;
-	// 		} else if (jsoneq(json, &tokens[i], "pc") == 0) {
-	// 			before_pc_value = tokens[i+1].start;
-	// 			after_pc_value = tokens[i+1].end;
-	// 		} else if (jsoneq(json, &tokens[i], "vregs") == 0) {
-	// 			before_vregs_value = tokens[i+1].start;
-	// 			after_vregs_value = tokens[i+1].end;
-	// 		}
-	// 	}
-
-	// 	print_substring(json, 0, before_tls_value);
-	// 	printf("0xtls"); // write tpidr_el0
-	// 	print_substring(json, after_tls_value, before_regs_value);
-	// 	printf("[ print all regs... ]"); // write regs
-	// 	print_substring(json, after_regs_value, before_sp_value);
-	// 	printf("0xsp"); // write sp
-	// 	print_substring(json, after_sp_value, before_pc_value);
-	// 	printf("0xpc"); // write pc
-	// 	print_substring(json, after_pc_value, before_vregs_value);
-	// 	printf("[ print all vregs... ]"); // write vregs
-	// 	print_substring(json, after_vregs_value, strlen(json));
-
-	// 	fclose(fpp);
+	// 	fclose(fp);
 	// }
+
+
 
 	// if(f) {
 	// 	// Determine file size
@@ -478,4 +471,42 @@ void print_substring(char * buffer, int start_index, int end_index) {
 	buffer[end_index] = 0;
 	printf(buffer + start_index);
 	buffer[end_index] = backup;	
+}
+
+static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
+  if (tok->type == JSMN_STRING && (int)strlen(s) == tok->end - tok->start &&
+      strncmp(json + tok->start, s, tok->end - tok->start) == 0) {
+    return 0;
+  }
+  return -1;
+}
+
+bool read_file(struct checkpoint_file_data * c_file) {
+	FILE *f = fopen(c_file->filename, "rb");
+
+	if(f) {
+		// Determine file size
+		fseek(f, 0, SEEK_END);
+		c_file->file_size = ftell(f);
+		fseek(f, 0, SEEK_SET);
+
+		c_file->buffer = malloc(c_file->file_size + 1);
+
+		if(c_file->buffer) {
+			fread(c_file->buffer, 1, c_file->file_size, f);
+			c_file->buffer[c_file->file_size] = 0;
+		} else {
+			// Unable to malloc.
+			printf("Unable to malloc %ld bytes for file %s.\n", c_file->file_size, c_file->filename);
+			c_file->file_size = -1;
+			return false;
+		}
+
+		fclose(f);
+	} else {
+		printf("Unable to read file: %s\n", c_file->filename);
+		return false;
+	}
+
+	return true;
 }
