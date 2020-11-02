@@ -202,13 +202,16 @@ int main(void)
 	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
 	index += sizeof(struct criu_checkpoint_regs);
 
-	printf("Got an updated PC of: %p\n", checkpoint->entry_addr);
-	printf("Got an updated SP of: %p\n", checkpoint->stack_addr);
+	printf("Got an updated PC of: \"%p\"\n", checkpoint->entry_addr);
+	printf("Got an updated SP of: \"%p\"\n", checkpoint->stack_addr);
 	printf("Got an updated TPIDR_EL0 of: %llu\n", checkpoint->tpidr_el0_addr);
 
 	printf("\nregs:\n");
 	for(int i = 0; i < 31; i++) {
-		printf("%p,\n", checkpoint->regs[i]);
+		if(checkpoint->regs[i])
+			printf("\"%p\",\n", checkpoint->regs[i]);
+		else
+			printf("\"0x0\",\n");
 	}
 
 	printf("\nvregs:\n");
@@ -220,12 +223,23 @@ int main(void)
 	index += sizeof(struct criu_checkpoint_dirty_pages);
 
 
-	// FILE *fp = fopen("pages-1.new.img", "w+");
+	FILE *fp = fopen("pages-1.new.img", "w+");
 	// FILE *f  = fopen("pages-1.img", "rb");
 
-	// printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-	// struct criu_pagemap_entry * pagemap_entry = NULL;
+	printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+	struct criu_pagemap_entry * pagemap_entry = NULL;
 
+	if(fp) {
+		long entry_page_offset = 0;
+		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+			pagemap_entry = op.params[0].memref.parent->buffer + index + (sizeof(struct criu_pagemap_entry) * y) ;
+			printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
+			fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fp);
+			entry_page_offset += pagemap_entry->nr_pages;
+		}
+
+		fclose(fp);
+	}
 
 	// if(f) {
 	// 	// Determine file size
