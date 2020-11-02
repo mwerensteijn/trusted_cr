@@ -87,7 +87,7 @@ struct checkpoint_file_data {
 };
 
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
-void print_substring(char * buffer, int start_index, int end_index);
+void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 
 
 static int jsoneq(const char *json, jsmntok_t *tok, const char *s);
@@ -308,44 +308,44 @@ int main(void)
 			}
 		}
 
-		print_substring(buffer, 0, before_tls_value);
+		fprintf_substring(fpp, buffer, 0, before_tls_value);
 
 		// Write tpidr_el0
-		printf("%llu", checkpoint->tpidr_el0_addr); 
-		print_substring(buffer, after_tls_value, before_regs_value);
+		fprintf(fpp, "%llu", checkpoint->tpidr_el0_addr); 
+		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
 
 		// Write all updated registers
-		putchar('[');
+		fputc('[', fpp);
 		for(int i = 0; i < 31; i++) {
 			if(checkpoint->regs[i])
-				printf("\"%p\"", checkpoint->regs[i]);
+				fprintf(fpp, "\"%p\"", checkpoint->regs[i]);
 			else
-				printf("\"0x0\"");
+				fprintf(fpp, "\"0x0\"");
 
 			if(i != 30)
-				printf(",\n");
+				fprintf(fpp, ",\n");
 		}
-		putchar(']');
-		print_substring(buffer, after_regs_value, before_sp_value);
+		fputc(']', fpp);
+		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
 
 		// Write updated stack pointer
-		printf("%p", checkpoint->stack_addr);
-		print_substring(buffer, after_sp_value, before_pc_value);
+		fprintf(fpp, "%p", checkpoint->stack_addr);
+		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
 
 		// Write updated program counter
-		printf("%p", checkpoint->entry_addr);
-		print_substring(buffer, after_pc_value, before_vregs_value);
+		fprintf(fpp, "%p", checkpoint->entry_addr);
+		fprintf_substring(fpp, buffer, after_pc_value, before_vregs_value);
 
 		// Write all updated vregs
-		putchar('[');
+		fputc('[', fpp);
 		for(int i = 0; i < 64; i++) {
-			printf("%llu", checkpoint->vregs[i]);
+			fprintf(fpp, "%llu", checkpoint->vregs[i]);
 
 			if(i != 63)
-				printf(",\n");
+				fprintf(fpp, ",\n");
 		}
-		putchar(']');
-		print_substring(buffer, after_vregs_value, file_size);
+		fputc(']', fpp);
+		fprintf_substring(fpp, buffer, after_vregs_value, file_size);
 
 		fclose(fpp);
 	}
@@ -466,10 +466,10 @@ bool insert_file_contents(const char * fileName, char * buffer, long * buffer_in
 	return true;
 }
 
-void print_substring(char * buffer, int start_index, int end_index) {
+void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index) {
 	char backup = buffer[end_index];
 	buffer[end_index] = 0;
-	printf(buffer + start_index);
+	fprintf(file, buffer + start_index);
 	buffer[end_index] = backup;	
 }
 
