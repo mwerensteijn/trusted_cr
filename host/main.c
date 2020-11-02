@@ -50,7 +50,8 @@ enum checkpoint_file_types {
 // Subtract the last enum from the first to determine the number of 
 // elements in the enum. By doing this we can use the enum values as indexes
 // to the checkpoint_files array. Example checkpoint_files[CORE_FILE].
-static const int CHECKPOINT_FILES = EXECUTABLE_BINARY_FILE - CORE_FILE + 1; 
+#define CHECKPOINT_FILES 5 
+#define CHECKPOINT_FILENAME_MAXLENGTH 40
 
 struct criu_checkpoint_regs {
 	uint64_t vregs[64];
@@ -80,8 +81,9 @@ struct criu_checkpoint_dirty_pages {
 
 struct checkpoint_file_data {
 	char * filename;
-	void * buffer;
+	char * buffer;
 	long file_size;
+	uint64_t buffer_index;
 };
 
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
@@ -96,7 +98,17 @@ bool read_file(struct checkpoint_file_data * c_file) {
 		c_file->file_size = ftell(f);
 		fseek(f, 0, SEEK_SET);
 
-		c_file->buffer = malloc(c_file->file_size);
+		c_file->buffer = malloc(c_file->file_size + 1);
+
+		if(c_file->buffer) {
+			fread(c_file->buffer, 1, c_file->file_size, f);
+			c_file->buffer[c_file->file_size] = 0;
+		} else {
+			// Unable to malloc.
+			printf("Unable to malloc %ld bytes for file %s.\n", c_file->file_size, c_file->filename);
+			c_file->file_size = -1;
+			return false;
+		}
 
 		fclose(f);
 	} else {
@@ -114,30 +126,28 @@ int main(void)
 	TEEC_Session sess;
 	TEEC_Operation op;
 	TEEC_SharedMemory sharedBuffer, sharedBufferInformation;
-	// TEEC_UUID uuid = TA_APP_MIGRATOR_UUID;
+	
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
 	printf("OP-TEE App Migrator\n\n");
 
-	char mm_filename[]      = "mm-3017.txt";
-	char core_filename[]    = "core-3017.txt";
-	char pages_filename[]   = "pages-1.img";
-	char binary_filename[]  = "loop2";
-	char pagemap_filename[] = "pagemap-3017.txt";
-
-	struct checkpoint_file_data files[5] = {
-		{ .filename = mm_filename },
-		{ .filename = core_filename },
-		{ .filename = pages_filename },
-		{ .filename = binary_filename },
-		{ .filename = pagemap_filename }
+	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
+		"core-3017.txt",
+		"mm-3017.txt",
+		"pagemap-3017.txt",
+		"pages-1.img",
+		"loop2"
 	};
+
+	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
 	
 	int total_buffer_size = 0;
-	for(int i = 0; i < 5; i++) {
+	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		files[i].filename = filenames[i];
 		read_file(&files[i]);
-		printf("size of %s is %d\n", files[i].filename, files[i].file_size);
+
+		// printf("size of %s is %d\n", files[i].filename, files[i].file_size);
 		total_buffer_size += files[i].file_size;
 	}
 
@@ -153,16 +163,19 @@ int main(void)
 
 	printf("Loading checkpoint files into the buffer... ");
 	long buffer_index = 0;
-	insert_file_contents("core-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[CORE_FILE]);
-	insert_file_contents("mm-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[MM_FILE]);
-	insert_file_contents("pages-1.img", dataBuffer, &buffer_index, &checkpoint_files[PAGES_BINARY_FILE]);
-	insert_file_contents("loop2", dataBuffer, &buffer_index, &checkpoint_files[EXECUTABLE_BINARY_FILE]);
-	insert_file_contents("pagemap-3017.txt", dataBuffer, &buffer_index, &checkpoint_files[PAGEMAP_FILE]);
+	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		memcpy(dataBuffer + buffer_index, files[i].buffer, files[i].file_size);
+		files[i].buffer_index = buffer_index;
+		dataBuffer[buffer_index + files[i].file_size] = 0;
+		buffer_index += files[i].file_size;
+	}
 	printf("done!\n");
 
 	// Setting the file types
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
+		checkpoint_files[i].file_size = files[i].file_size;
+		checkpoint_files[i].buffer_index = files[i].buffer_index;
 	}
 
 	/* Initialize a context connecting us to the TEE */
