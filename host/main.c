@@ -425,7 +425,6 @@ int main(void)
 
 	for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
 		pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-		pagemap_entry->vaddr_start = 0x40051000;
 		bool skip = false;
 		bool insert_before = false;
 		TAILQ_FOREACH(entry, &pagemap_entries, link) {
@@ -434,16 +433,9 @@ int main(void)
 				skip = true;
 				break;
 			} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
-				if((pagemap_entry->vaddr_start + pagemap_entry->nr_pages * 4096) == entry->entry.vaddr_start) {
-					entry->entry.vaddr_start = pagemap_entry->vaddr_start;
-					entry->entry.nr_pages++;
-					skip = true;
-				} else {
-					insert_before = true;
-				}
+				insert_before = true;
 				break;
-			} 
-			// There also is a case where we have 0x4005000 and we want to add 0x4006000. Those areas will not be merged yet
+			}
 		}		
 
 		if(skip)
