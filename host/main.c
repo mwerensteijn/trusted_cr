@@ -545,6 +545,11 @@ int main(void)
 		free(files[i].buffer);
 	}
 
+	// Free all allocated criu_pagemap_entry structs
+	TAILQ_FOREACH(entry, &pagemap_entries, link) {
+		free(entry);
+	}
+
 	/*
 	 * We're done with the TA, close the session and
 	 * destroy the context.
