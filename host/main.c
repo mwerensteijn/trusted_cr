@@ -152,6 +152,44 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 	}
 }
 
+void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
+									struct criu_checkpoint_dirty_pages * dirty_pages_info,
+									long * shared_buffer_2_index, char * original_buffer) {
+	FILE *fpages = fopen("modified_pages-1.img", "w+");
+	if(fpages) {
+		struct criu_pagemap_entry_tracker * entry = NULL;
+		struct criu_pagemap_entry * pagemap_entry = NULL;
+		TAILQ_FOREACH(entry, pagemap_entries, link) {
+			for(int i = 0; i < entry->entry.nr_pages; i++) {
+				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
+
+				bool dirty_page = false;
+				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+					pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+					
+					if(addr == pagemap_entry->vaddr_start) {
+						// Write dirty page
+						fwrite(parameter_buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
+						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+						dirty_page = true;
+						break;
+					}
+				}
+
+				if(!dirty_page) {
+					// Write the original
+					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
+					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+				}
+			}
+		}
+
+		fclose(fpages);
+	} else {
+		printf("Unable to open pages-1.img for writing..");
+	}
+}
+
 int main(void)
 {
 	TEEC_Result res;
@@ -421,39 +459,7 @@ int main(void)
 		printf("Unable to open modified_pagemap.txt");
 	}
 
-	FILE *fpages = fopen("modified_pages-1.img", "w+");
-	if(fpages) {
-		struct criu_pagemap_entry_tracker * entry = NULL;
-		struct criu_pagemap_entry * pagemap_entry = NULL;
-		TAILQ_FOREACH(entry, &pagemap_entries, link) {
-			for(int i = 0; i < entry->entry.nr_pages; i++) {
-				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
-
-				bool dirty_page = false;
-				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-					pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-					
-					if(addr == pagemap_entry->vaddr_start) {
-						// Write dirty page
-						fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
-						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-						dirty_page = true;
-						break;
-					}
-				}
-
-				if(!dirty_page) {
-					// Write the original
-					fwrite(files[PAGES_BINARY_FILE].buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
-					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-				}
-			}
-		}
-
-		fclose(fpages);
-	} else {
-		printf("Unable to open pages-1.img for writing..");
-	}
+	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
