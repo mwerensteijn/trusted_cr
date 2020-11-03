@@ -452,8 +452,6 @@ int main(void)
 			TAILQ_INSERT_BEFORE(entry, new_entry, link);
 		else
 			TAILQ_INSERT_TAIL(&pagemap_entries, new_entry, link);
-		
-		// printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
 	}
 
 
@@ -481,59 +479,37 @@ int main(void)
 
 	printf("] }");
 
-	// if(fp) {
-	// 	long entry_page_offset = 0;
-	// 	for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-	// 		pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-	// 		printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
-	// 		// fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fp);
-	// // 		entry_page_offset += pagemap_entry->nr_pages;
-	// 	}
+	FILE *fpages = fopen("modified_pages-1.img", "w+");
+	if(fpages) {
+		TAILQ_FOREACH(entry, &pagemap_entries, link) {
+			for(int i = 0; i < entry->entry.nr_pages; i++) {
+				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
 
-	// 	fclose(fp);
-	// }
+				bool dirty_page = false;
+				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+					pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+					
+					if(addr == pagemap_entry->vaddr_start) {
+						// Write dirty page
+						fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
+						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+						dirty_page = true;
+						break;
+					}
+				}
 
+				if(!dirty_page) {
+					// Write the original
+					fwrite(files[PAGES_BINARY_FILE].buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
+					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+				}
+			}
+		}
 
-
-	// if(f) {
-	// 	// Determine file size
-	// 	fseek(f, 0, SEEK_END);
-	// 	int page_count = ftell(f) / 4096;
-	// 	fseek(f, 0, SEEK_SET);
-
-	// 	printf("size: %d\n", page_count);
-	// 	char buffer[4096];
-
-	// 	for(int i = 0; i < page_count; i++) {
-	// 		// Read from the original pages-1.img file
-	// 		fread(buffer, 1, 4096, f);
-
-	// 		// Track if this page is updated
-	// 		bool dirty_page = false;
-
-	// 		// Check every dirty page for a match
-	// 		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-	// 			pagemap_entry = op.params[0].memref.parent->buffer + index + (sizeof(struct criu_pagemap_entry) * y) ;
-	// 			if(pagemap_entry->file_page_index == i) {
-	// 				printf("Dirty page at: %p - entries: %d - entry: %d\n", pagemap_entry->vaddr_start, pagemap_entry->nr_pages, pagemap_entry->file_page_index);
-	// 				fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + pagemap_entry->file_page_index * 4096, 1, 4096 + (pagemap_entry->nr_pages - 1) * 4096, fp);
-	// 				i += pagemap_entry->nr_pages - 1;
-	// 				dirty_page = true;
-	// 				break;
-	// 			}
-	// 		}
-
-	// 		// The page is not dirty, so write the original
-	// 		if(!dirty_page) {
-	// 			fwrite(buffer, 1, 4096, fp);
-	// 		}
-	// 	}
-
-	// 	fclose(f);
-	// }
-
-	// if(fp)
-	// 	fclose(fp);
+		fclose(fpages);
+	} else {
+		printf("Unable to open pages-1.img for writing..");
+	}
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
