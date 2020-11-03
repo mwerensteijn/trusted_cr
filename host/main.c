@@ -190,6 +190,118 @@ void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap
 	}
 }
 
+void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
+									struct criu_checkpoint_dirty_pages * dirty_pages_info,
+									long * shared_buffer_2_index, char * buffer, long file_size) {
+	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
+
+	if(fpagemap) {
+		// Initialize the JSMN json parser
+		jsmn_parser parser;
+		jsmn_init(&parser);
+
+		// First only determine the number of tokens.
+		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
+
+		jsmntok_t tokens[items];
+		
+		// Reset position in stream
+		jsmn_init(&parser);
+		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
+
+		// Invalid file.
+		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+			printf("CRIU: INVALID JSON\n");
+			return -1;
+		}
+
+		// First vaddr index
+		int vaddr_start = 0;
+
+		// Parse the JSON version of the core checkpoint file (example core-2956.img)
+		for(int i = 1; i < items; i++) {
+			if (jsoneq(buffer, &tokens[i], "vaddr") == 0) { 
+				vaddr_start = tokens[i-1].start;
+				break;
+			}
+		}
+
+		char backup = buffer[vaddr_start];
+		buffer[vaddr_start] = 0;
+		fprintf(fpagemap, "%s", buffer);
+		buffer[vaddr_start] = backup;	
+		struct criu_pagemap_entry_tracker * entry = NULL;
+
+		// FILE *fp = fopen("pages-1.new.img", "w+");
+		// // FILE *f  = fopen("pages-1.img", "rb");
+
+		printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+		struct criu_pagemap_entry * pagemap_entry = NULL;
+
+
+
+		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+			pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+			bool skip = false;
+			bool insert_before = false;
+			TAILQ_FOREACH(entry, pagemap_entries, link) {
+				if((entry->entry.vaddr_start <= pagemap_entry->vaddr_start)  &&
+				(pagemap_entry->vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
+					skip = true;
+					break;
+				} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
+					insert_before = true;
+					break;
+				}
+			}		
+
+			if(skip)
+				continue;
+
+			struct criu_pagemap_entry_tracker * new_entry = calloc(1, sizeof(struct criu_pagemap_entry_tracker));
+			
+			new_entry->entry.vaddr_start = pagemap_entry->vaddr_start;
+			new_entry->entry.nr_pages = pagemap_entry->nr_pages;
+			new_entry->entry.file_page_index = pagemap_entry->file_page_index;
+			new_entry->entry.flags = PE_LAZY | PE_PRESENT;
+
+			if(insert_before)
+				TAILQ_INSERT_BEFORE(entry, new_entry, link);
+			else
+				TAILQ_INSERT_TAIL(pagemap_entries, new_entry, link);
+		}
+
+
+		TAILQ_FOREACH(entry, pagemap_entries, link) {
+			fprintf(fpagemap, "{\n\t\"vaddr\": \"%p\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
+			
+			bool require_seperator = false;
+			if(entry->entry.flags & PE_LAZY) {
+				fprintf(fpagemap, "PE_LAZY");
+				require_seperator = true;
+			}
+
+			if(entry->entry.flags & PE_PRESENT) {
+				if(require_seperator)
+					fprintf(fpagemap, " | ");
+
+				fprintf(fpagemap, "PE_PRESENT");
+			}
+
+			fprintf(fpagemap, "\"\n}");
+
+			if(entry->link.tqe_next != NULL)
+				fprintf(fpagemap, ",\n");
+		}
+
+		fprintf(fpagemap, "] }");
+
+		fclose(fpagemap);
+	} else {
+		printf("Unable to open modified_pagemap.txt");
+	}
+}
+
 int main(void)
 {
 	TEEC_Result res;
@@ -345,119 +457,11 @@ int main(void)
 
 	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
-
+	
 	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	if(fpagemap) {
-		char * buffer = files[PAGEMAP_FILE].buffer;
-		long file_size = files[PAGEMAP_FILE].file.file_size;
-
-		// Initialize the JSMN json parser
-		jsmn_parser parser;
-		jsmn_init(&parser);
-
-		// First only determine the number of tokens.
-		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
-
-		jsmntok_t tokens[items];
-		
-		// Reset position in stream
-		jsmn_init(&parser);
-		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
-
-		// Invalid file.
-		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-			printf("CRIU: INVALID JSON\n");
-			return -1;
-		}
-
-		// First vaddr index
-		int vaddr_start = 0;
-
-		// Parse the JSON version of the core checkpoint file (example core-2956.img)
-		for(int i = 1; i < items; i++) {
-			if (jsoneq(buffer, &tokens[i], "vaddr") == 0) { 
-				vaddr_start = tokens[i-1].start;
-				break;
-			}
-		}
-
-		char backup = buffer[vaddr_start];
-		buffer[vaddr_start] = 0;
-		fprintf(fpagemap, "%s", buffer);
-		buffer[vaddr_start] = backup;	
-		struct criu_pagemap_entry_tracker * entry = NULL;
-
-		// FILE *fp = fopen("pages-1.new.img", "w+");
-		// // FILE *f  = fopen("pages-1.img", "rb");
-
-		printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-		struct criu_pagemap_entry * pagemap_entry = NULL;
-
-
-
-		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-			pagemap_entry = op.params[0].memref.parent->buffer + shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-			bool skip = false;
-			bool insert_before = false;
-			TAILQ_FOREACH(entry, &pagemap_entries, link) {
-				if((entry->entry.vaddr_start <= pagemap_entry->vaddr_start)  &&
-				(pagemap_entry->vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
-					skip = true;
-					break;
-				} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
-					insert_before = true;
-					break;
-				}
-			}		
-
-			if(skip)
-				continue;
-
-			struct criu_pagemap_entry_tracker * new_entry = calloc(1, sizeof(struct criu_pagemap_entry_tracker));
-			
-			new_entry->entry.vaddr_start = pagemap_entry->vaddr_start;
-			new_entry->entry.nr_pages = pagemap_entry->nr_pages;
-			new_entry->entry.file_page_index = pagemap_entry->file_page_index;
-			new_entry->entry.flags = PE_LAZY | PE_PRESENT;
-
-			if(insert_before)
-				TAILQ_INSERT_BEFORE(entry, new_entry, link);
-			else
-				TAILQ_INSERT_TAIL(&pagemap_entries, new_entry, link);
-		}
-
-
-		TAILQ_FOREACH(entry, &pagemap_entries, link) {
-			fprintf(fpagemap, "{\n\t\"vaddr\": \"%p\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
-			
-			bool require_seperator = false;
-			if(entry->entry.flags & PE_LAZY) {
-				fprintf(fpagemap, "PE_LAZY");
-				require_seperator = true;
-			}
-
-			if(entry->entry.flags & PE_PRESENT) {
-				if(require_seperator)
-					fprintf(fpagemap, " | ");
-
-				fprintf(fpagemap, "PE_PRESENT");
-			}
-
-			fprintf(fpagemap, "\"\n}");
-
-			if(entry->link.tqe_next != NULL)
-				fprintf(fpagemap, ",\n");
-		}
-
-		fprintf(fpagemap, "] }");
-
-		fclose(fpagemap);
-	} else {
-		printf("Unable to open modified_pagemap.txt");
-	}
+	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
 	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
