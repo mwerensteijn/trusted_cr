@@ -32,74 +32,16 @@
 #include <sys/queue.h>
 #include "jsmn.h"
 
+#include <criu_checkpoint.h>
+
 /* OP-TEE TEE client API (built by optee_client) */
 #include <tee_client_api.h>
 
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-typedef uintptr_t vaddr_t;
-
-enum checkpoint_file_types { 
-	CORE_FILE = 0,				// core-*.img
-	MM_FILE,				// mm-*.img
-	PAGEMAP_FILE,			// pagemap-*.img
-	PAGES_BINARY_FILE,		// pages-*.img
-	EXECUTABLE_BINARY_FILE	// The binary itself that is checkpointed
-};
-
-// Subtract the last enum from the first to determine the number of 
-// elements in the enum. By doing this we can use the enum values as indexes
-// to the checkpoint_files array. Example checkpoint_files[CORE_FILE].
 #define CHECKPOINT_FILES 5 
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
-
-struct criu_checkpoint_regs {
-	uint64_t vregs[64];
-	uint64_t regs[31];
-	uint64_t entry_addr;
-	uint64_t stack_addr;
-	uint64_t tpidr_el0_addr;
-};
-
-struct checkpoint_file {
-	enum checkpoint_file_types file_type;
-	uint64_t buffer_index;
-	uint64_t file_size;
-};
-
-struct criu_pagemap_entry {
-	vaddr_t vaddr_start;
-	unsigned long file_page_index;
-	unsigned long nr_pages;
-	uint8_t flags;
-};
-
-struct criu_checkpoint_dirty_pages {
-	uint32_t dirty_page_count;
-	uint32_t offset;
-};
-
-struct checkpoint_file_data {
-	char * filename;
-	char * buffer;
-	long file_size;
-	uint64_t buffer_index;
-};
-
-struct criu_pagemap_entry_tracker{
-	struct criu_pagemap_entry entry;
-	bool dirty;
-	void * buffer;
-	TAILQ_ENTRY(criu_pagemap_entry_tracker) link;
-};
-
-enum criu_pte_flags {
-	PE_PRESENT  = 1 << 0,
-	PE_LAZY     = 1 << 1
-};
-
-TAILQ_HEAD(criu_pagemap_entries, criu_pagemap_entry_tracker);
 
 bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
@@ -138,7 +80,7 @@ int main(void)
 		read_file(&files[i]);
 
 		// Increase the buffer size
-		shared_buffer_1_size += files[i].file_size;
+		shared_buffer_1_size += files[i].file.file_size;
 	}
 
 	// Notice the ++? Reserve another byte for the \0 character
@@ -155,13 +97,13 @@ int main(void)
 	long shared_buffer_1_index = 0;
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		// First copy the data from the checkpoint file buffer to shared buffer 1 at the correct index
-		memcpy(shared_buffer_1 + shared_buffer_1_index, files[i].buffer, files[i].file_size);
+		memcpy(shared_buffer_1 + shared_buffer_1_index, files[i].buffer, files[i].file.file_size);
 		// Store the index so we can send that info later in shared buffer 2
-		files[i].buffer_index = shared_buffer_1_index;
+		files[i].file.buffer_index = shared_buffer_1_index;
 		// Will be overwritten by the next memcpy, except for the last entry
-		shared_buffer_1[shared_buffer_1_index + files[i].file_size] = 0;
+		shared_buffer_1[shared_buffer_1_index + files[i].file.file_size] = 0;
 
-		shared_buffer_1_index += files[i].file_size;
+		shared_buffer_1_index += files[i].file.file_size;
 	}
 	printf("done!\n");
 
@@ -169,8 +111,8 @@ int main(void)
 	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
-		checkpoint_files[i].file_size = files[i].file_size;
-		checkpoint_files[i].buffer_index = files[i].buffer_index;
+		checkpoint_files[i].file_size = files[i].file.file_size;
+		checkpoint_files[i].buffer_index = files[i].file.buffer_index;
 	}
 
 	/* Initialize a context connecting us to the TEE */
@@ -260,7 +202,7 @@ int main(void)
 		// fwrite(op.params[0].memref.parent->buffer + dirty_pages_info->offset + entry_page_offset * 4096, 1, (pagemap_entry->nr_pages * 4096), fpp);
 
 		char * buffer = files[CORE_FILE].buffer;
-		long file_size = files[CORE_FILE].file_size;
+		long file_size = files[CORE_FILE].file.file_size;
 
 		// Initialize the JSMN json parser
 		jsmn_parser parser;
@@ -366,7 +308,7 @@ int main(void)
 	struct criu_pagemap_entries pagemap_entries;
 	TAILQ_INIT(&pagemap_entries);
 
-	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file_size);
+	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
 	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
 
@@ -375,7 +317,7 @@ int main(void)
 
 	if(fpagemap) {
 		char * buffer = files[PAGEMAP_FILE].buffer;
-		long file_size = files[PAGEMAP_FILE].file_size;
+		long file_size = files[PAGEMAP_FILE].file.file_size;
 
 		// Initialize the JSMN json parser
 		jsmn_parser parser;
@@ -596,18 +538,18 @@ bool read_file(struct checkpoint_file_data * c_file) {
 	if(f) {
 		// Determine file size
 		fseek(f, 0, SEEK_END);
-		c_file->file_size = ftell(f);
+		c_file->file.file_size = ftell(f);
 		fseek(f, 0, SEEK_SET);
 
-		c_file->buffer = malloc(c_file->file_size + 1);
+		c_file->buffer = malloc(c_file->file.file_size + 1);
 
 		if(c_file->buffer) {
-			fread(c_file->buffer, 1, c_file->file_size, f);
-			c_file->buffer[c_file->file_size] = 0;
+			fread(c_file->buffer, 1, c_file->file.file_size, f);
+			c_file->buffer[c_file->file.file_size] = 0;
 		} else {
 			// Unable to malloc.
-			printf("Unable to malloc %ld bytes for file %s.\n", c_file->file_size, c_file->filename);
-			c_file->file_size = -1;
+			printf("Unable to malloc %ld bytes for file %s.\n", c_file->file.file_size, c_file->filename);
+			c_file->file.file_size = -1;
 			return false;
 		}
 

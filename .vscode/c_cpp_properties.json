@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "/opt/optee-qemu/optee_client/out/export/usr/**",
-                "/opt/optee-qemu/optee_os/out/arm/export-ta_arm64/**"
+                "/opt/optee-qemu/optee_os/out/arm/export-ta_arm64/**",
+                "/opt/optee-qemu/optee_os/core/include/criu/**"
             ],
             "defines": [
                 "CROSS_COMPILE=\"/opt/optee-qemu/toolchains/aarch64/bin/aarch64-linux-gnu-\"",
