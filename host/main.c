@@ -368,6 +368,48 @@ int main(void)
 
 	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file_size);
 
+
+	char * buffer = files[PAGEMAP_FILE].buffer;
+	long file_size = files[PAGEMAP_FILE].file_size;
+
+	// Initialize the JSMN json parser
+	jsmn_parser parser;
+	jsmn_init(&parser);
+
+	// First only determine the number of tokens.
+	int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
+
+	jsmntok_t tokens[items];
+	
+	// Reset position in stream
+	jsmn_init(&parser);
+	int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
+
+	// Invalid file.
+	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+		printf("CRIU: INVALID JSON\n");
+		return -1;
+	}
+
+	// First vaddr index
+	int vaddr_start = 0;
+
+	// Parse the JSON version of the core checkpoint file (example core-2956.img)
+	for(int i = 1; i < items; i++) {
+		if (jsoneq(buffer, &tokens[i], "vaddr") == 0) { 
+			vaddr_start = tokens[i-1].start;
+			break;
+		}
+	}
+
+	char backup = buffer[vaddr_start];
+	buffer[vaddr_start] = 0;
+	printf("%s", buffer);
+	buffer[vaddr_start] = backup;	
+
+
+
+
 	struct criu_pagemap_entry_tracker * entry = NULL;
 	TAILQ_FOREACH(entry, &pagemap_entries, link) {
 		printf("{\n\t\"vaddr\": \"%p\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
@@ -390,6 +432,8 @@ int main(void)
 		if(entry->link.tqe_next != NULL)
 			printf(",\n");
 	}
+
+	printf("] }");
 
 	// struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
 	// shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
