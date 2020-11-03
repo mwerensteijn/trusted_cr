@@ -44,7 +44,6 @@
 #define CHECKPOINT_FILES 5 
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
 
-bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file);
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
@@ -486,44 +485,12 @@ int main(void)
 	return 0;
 }
 
-bool insert_file_contents(const char * fileName, char * buffer, long * buffer_index, struct checkpoint_file * checkpoint_file) {
-	FILE *f = fopen(fileName, "rb");
-
-	if(f) {
-		// Determine file size
-		fseek(f, 0, SEEK_END);
-		checkpoint_file->file_size = ftell(f) + 1;
-		fseek(f, 0, SEEK_SET);
-
-		if(buffer) {
-			fread(buffer + *buffer_index, 1, checkpoint_file->file_size, f);
-			buffer[*buffer_index + checkpoint_file->file_size] = 0;
-			checkpoint_file->buffer_index = *buffer_index;
-		} else {
-			// Unable to malloc.
-			printf("Unable to malloc %ld bytes for file contents.\n", checkpoint_file->file_size);
-			checkpoint_file->file_size = -1;
-			return false;
-		}
-
-		fclose(f);
-	} else {
-		printf("Unable to read file: %s\n", fileName);
-		return false;
-	}
-
-	*buffer_index += checkpoint_file->file_size;
-	return true;
-}
-
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index) {
 	char backup = buffer[end_index];
 	buffer[end_index] = 0;
 	fprintf(file, buffer + start_index);
 	buffer[end_index] = backup;	
 }
-
-
 
 bool read_file(struct checkpoint_file_data * c_file) {
 	FILE *f = fopen(c_file->filename, "rb");
