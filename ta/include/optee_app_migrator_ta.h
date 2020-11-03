@@ -42,6 +42,6 @@
 		
 
 /* The function IDs implemented in this TA */
-#define TA_OPTEE_APP_MIGRATOR_CMD_PRINT_STRING	0
+#define CRIU_LOAD_CHECKPOINT	0
 
 #endif /*TA_OPTEE_APP_MIGRATOR_H*/
