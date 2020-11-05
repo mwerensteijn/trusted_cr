@@ -85,6 +85,10 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		int before_pc_value = 0;
 		int  after_pc_value = 0;
 
+		// Pstate indexes
+		int before_pstate_value = 0;
+		int  after_pstate_value = 0;
+
 		// Vregs indexes
 		int before_vregs_value = 0;
 		int  after_vregs_value = 0;
@@ -103,6 +107,9 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
 				before_pc_value = tokens[i+1].start;
 				after_pc_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "pstate") == 0) {
+				before_pstate_value = tokens[i+1].start;
+				after_pstate_value = tokens[i+1].end;
 			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
 				before_vregs_value = tokens[i+1].start;
 				after_vregs_value = tokens[i+1].end;
@@ -135,7 +142,11 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 
 		// Write updated program counter
 		fprintf(fpp, "%p", checkpoint->entry_addr);
-		fprintf_substring(fpp, buffer, after_pc_value, before_vregs_value);
+		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
+		
+		// Write updated pstate
+		fprintf(fpp, "%p", checkpoint->pstate);
+		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
 
 		// Write all updated vregs
 		fputc('[', fpp);
@@ -457,7 +468,6 @@ int main(void)
 
 	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	
 	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
