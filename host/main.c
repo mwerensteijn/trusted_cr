@@ -93,6 +93,14 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		int before_vregs_value = 0;
 		int  after_vregs_value = 0;
 
+		// FPSR indexes
+		int before_fpsr_value = 0;
+		int  after_fpsr_value = 0;
+
+		// FPCR indexes
+		int before_fpcr_value = 0;
+		int  after_fpcr_value = 0;
+
 		// Parse the JSON version of the core checkpoint file (example core-2956.img)
 		for(int i = 1; i < items; i++) {
 			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
@@ -113,6 +121,12 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
 				before_vregs_value = tokens[i+1].start;
 				after_vregs_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "fpsr") == 0) {
+				before_fpsr_value = tokens[i+1].start;
+				after_fpsr_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "fpcr") == 0) {
+				before_fpcr_value = tokens[i+1].start;
+				after_fpcr_value = tokens[i+1].end;
 			}
 		}
 
@@ -157,7 +171,15 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 				fprintf(fpp, ",\n");
 		}
 		fputc(']', fpp);
-		fprintf_substring(fpp, buffer, after_vregs_value, file_size);
+		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
+
+		// Write updated fpsr
+		fprintf(fpp, "%lu", checkpoint->fpsr);
+		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
+		
+		// Write updated fpcr
+		fprintf(fpp, "%lu", checkpoint->fpcr);
+		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
 
 		fclose(fpp);
 	}
