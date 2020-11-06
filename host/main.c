@@ -352,12 +352,20 @@ int main(void)
 	printf("OP-TEE App Migrator\n\n");
 
 	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
-		"core-3017.txt",
-		"mm-3017.txt",
-		"pagemap-3017.txt",
-		"pages-1.img",
+		"core-2956.txt",
+		"mm-2956.txt",
+		"pagemap-2956.txt",
+		"pages-1-2956.img",
 		"loop2"
 	};
+
+	// char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
+	// 	"core-3011.txt",
+	// 	"mm-3011.txt",
+	// 	"pagemap-3011.txt",
+	// 	"pages-1-3011.img",
+	// 	"condition"
+	// };
 	
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
