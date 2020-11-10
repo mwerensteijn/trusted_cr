@@ -335,8 +335,15 @@ void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagem
 	}
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
+	printf("OP-TEE App Migrator\n\n");
+
+	if(argc < 3) {
+		printf("Usage: optee_app_migrator $pid $executable_name\n");
+		exit(-1);
+	}
+
 	TEEC_Result res;
 	TEEC_Context ctx;
 	TEEC_Session sess;
@@ -349,15 +356,14 @@ int main(void)
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
-	printf("OP-TEE App Migrator\n\n");
-
 	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
-		"core-2956.txt",
-		"mm-2956.txt",
-		"pagemap-2956.txt",
-		"pages-1-2956.img",
-		"loop2"
 	};
+
+	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%s.txt", argv[1]);
+	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%s.txt", argv[1]);
+	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%s.txt", argv[1]);
+	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img", argv[1]);
+	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", argv[2]);
 
 	// char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
 	// 	"core-3011.txt",
@@ -370,6 +376,8 @@ int main(void)
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		printf("%d: %s\n", i, filenames[i]);
+
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
 		read_file(&files[i]);
