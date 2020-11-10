@@ -32,8 +32,8 @@
 #include <sys/queue.h>
 #include "jsmn.h"
 
-#include <criu/criu_checkpoint.h>
-#include <criu/criu_checkpoint_parser.h>
+#include "criu/criu_checkpoint.h"
+#include "criu/criu_checkpoint_parser.h"
 
 /* OP-TEE TEE client API (built by optee_client) */
 #include <tee_client_api.h>
