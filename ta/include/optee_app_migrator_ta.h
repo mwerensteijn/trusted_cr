@@ -44,5 +44,6 @@
 /* The function IDs implemented in this TA */
 #define CRIU_LOAD_CHECKPOINT	0
 #define CRIU_CHECKPOINT_BACK	1
+#define CRIU_CONTINUE_EXECUTION	2
 
 #endif /*TA_OPTEE_APP_MIGRATOR_H*/

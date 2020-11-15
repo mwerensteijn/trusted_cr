@@ -488,6 +488,23 @@ int main(int argc, char *argv[])
 			res, err_origin);
 	printf("TA returned from secure world\n");
 
+	printf("\nContinuing execution\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
+
+	printf("\nContinuing execution\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
+
+
 	printf("\nCheckpointing data back\n");
 	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
 				&err_origin);
