@@ -480,8 +480,16 @@ int main(int argc, char *argv[])
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
 	*/
-	printf("\nInvoking TA\n");
+	printf("\nLoading & executing checkpoint\n");
 	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
+
+	printf("\nCheckpointing data back\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
 				&err_origin);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
