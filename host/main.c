@@ -486,57 +486,72 @@ int main(int argc, char *argv[])
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
 			res, err_origin);
-	printf("TA returned from secure world\n");
-
-	printf("\nContinuing execution\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-			res, err_origin);
-	printf("TA returned from secure world\n");
-
-	printf("\nContinuing execution\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-			res, err_origin);
-	printf("TA returned from secure world\n");
 
 
-	printf("\nCheckpointing data back\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-			res, err_origin);
-	printf("TA returned from secure world\n");
+	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
+	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + sizeof(enum criu_return_types);
 
-	// As the memory buffers where shared, the data can be changed in the secure world.
-	// After running the checkpoint in the secure world, the secure world checkpoints back
-	// and puts the updated checkpoint values in the parameters.
+	printf("TA returned from secure world: ");
+	switch(*return_type) {
+		case CRIU_SYSCALL_EXIT:
+			printf("EXIT system call!\n");
+			break;
+		case CRIU_SYSCALL_OPENAT:
+			printf("at pc: %p\n", checkpoint_regs->entry_addr);
+			printf("OPENAT system call!: dfd: %d - filename: %p - flags: %p - umode: %p\n", 
+				checkpoint_regs->regs[0], checkpoint_regs->regs[1],
+				checkpoint_regs->regs[2], checkpoint_regs->regs[3]);
+			break;
+		case CRIU_SYSCALL_UNSUPPORTED:
+			printf("unsupported system call.\n");
+			break;
+		default:
+			printf("no idea what happened.\n");
+			break;
+	}
+
+
+	// printf("\nContinuing execution\n");
+	// res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+	// 			&err_origin);
+	// if (res != TEEC_SUCCESS)
+	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+	// 		res, err_origin);
+	// printf("TA returned from secure world\n");
 	
-	// TODO: implement checking the parameter for correct lengths
-	// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
+	// printf("\nCheckpointing data back\n");
+	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
+	// 			&err_origin);
+	// if (res != TEEC_SUCCESS)
+	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+	// 		res, err_origin);
+	// printf("TA returned from secure world\n");
 
-	long shared_buffer_2_index = 0;
-	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+			// As the memory buffers where shared, the data can be changed in the secure world.
+			// After running the checkpoint in the secure world, the secure world checkpoints back
+			// and puts the updated checkpoint values in the parameters.
+			
+			// TODO: implement checking the parameter for correct lengths
+			// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
-	write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
+
+	// long shared_buffer_2_index = 0;
+	// struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+	// shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+
+	// write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
 
 	struct criu_pagemap_entries pagemap_entries;
 	TAILQ_INIT(&pagemap_entries);
 
-	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	// parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+	// struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
+	// shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	// write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
+	// write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
