@@ -45,15 +45,72 @@
 #define CHECKPOINT_FILES_TO_TRANSFER 5
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
 
-struct fd_info {
-	int id;
-	int fd;
-};
-
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
-static bool parse_fd_info(struct fd_info * fd_info_files, char * json, uint64_t file_size) {
+static bool parse_files_image(struct criu_file * criu_files, char * json, uint64_t file_size) {
+	// Initialize the JSMN json parser
+	jsmn_parser parser;
+	jsmn_init(&parser);
+
+	// First only determine the number of tokens.
+	int items = jsmn_parse(&parser, json, file_size, NULL, 128);
+
+	jsmntok_t tokens[items];
+	
+	// Reset position in stream
+	jsmn_init(&parser);
+	int left = jsmn_parse(&parser, json, file_size, tokens, items);
+
+	// Invalid file.
+	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+		DMSG("CRIU: INVALID JSON\n");
+		return false;
+	}
+
+	// Parse the JSON version of the core checkpoint file (example core-2956.img)
+	for(int i = 1; i < items; i++) {
+		// Find the 'entries' field in the file
+		if (jsoneq(json, &tokens[i], "entries") == 0) {
+			if(tokens[i+1].type == JSMN_ARRAY) {
+				// Allocate the required number of file entries
+				int files_count = tokens[++i].size;
+				i++;
+
+				printf("files_count: %d\n", files_count);
+				criu_files = malloc(sizeof(struct criu_file) * files_count);
+
+				int files_index = 0;
+				// Parse all file entries
+				for(int y = 0; y < files_count; y++) {
+					int end = tokens[i].end;
+					jsmntok_t * file_token = &tokens[i+4];
+					i += 4;
+					criu_files[y].id = strtoul(json + file_token->start, NULL, 10);
+					printf("%d: id:%d\n", y, criu_files[y].id);
+					
+					while(i < items && tokens[i].start < end) {
+						if(jsoneq(json, &tokens[i], "name") == 0) {
+							int len = tokens[i+1].end - tokens[i+1].start + 1;
+							criu_files[y].name = malloc(len);
+							strncpy(criu_files[y].name, json + tokens[i+1].start, len-1);
+							criu_files[y].name[len] = 0;
+							printf("name: %s\n", criu_files[y].name);
+							i++;
+						}
+						i++;
+					}
+				}
+
+				return true;
+			}
+		}
+	}
+
+	return true;
+}
+
+static bool parse_fd_info(struct criu_fd_info * fd_info_files, char * json, uint64_t file_size) {
 	// Initialize the JSMN json parser
 	jsmn_parser parser;
 	jsmn_init(&parser);
@@ -82,7 +139,7 @@ static bool parse_fd_info(struct fd_info * fd_info_files, char * json, uint64_t 
 				int fd_info_count = tokens[++i].size;
 				i++;
 
-				fd_info_files = malloc(sizeof(struct fd_info) * fd_info_count);
+				fd_info_files = malloc(sizeof(struct criu_fd_info) * fd_info_count);
 
 				int fd_info_index = 0;
 				// Parse all pagemap entries
@@ -436,9 +493,15 @@ int main(int argc, char *argv[])
 			shared_buffer_1_size += files[i].file.file_size;
 	}
 
-	struct fd_info * fd_info_list = NULL;
+	struct criu_fd_info * fd_info_list = NULL;
 	if(!parse_fd_info(fd_info_list, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
 		printf("Unable to parse: %s", filenames[FD_INFO_FILE]);
+		return -1;
+	}
+
+	struct criu_file * file_list = NULL;
+	if(!parse_files_image(file_list, files[FILES_FILE].buffer, files[FILES_FILE].file.file_size)) {
+		printf("Unable to parse: %s", filenames[FILES_FILE]);
 		return -1;
 	}
 
@@ -620,7 +683,7 @@ int main(int argc, char *argv[])
 	free(checkpoint_files);
 	free(fd_info_list);
 
-	for(int i = 0; i < 5; i++) {
+	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		free(files[i].buffer);
 	}
 
