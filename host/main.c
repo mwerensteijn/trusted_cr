@@ -48,7 +48,7 @@
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
-static bool parse_files_image(struct criu_file * criu_files, int * file_list_size, char * json, uint64_t file_size) {
+static bool parse_files_image(struct criu_file ** criu_files, int * file_list_size, char * json, uint64_t file_size) {
 	// Initialize the JSMN json parser
 	jsmn_parser parser;
 	jsmn_init(&parser);
@@ -77,9 +77,8 @@ static bool parse_files_image(struct criu_file * criu_files, int * file_list_siz
 				int files_count = tokens[++i].size;
 				i++;
 
-				printf("files_count: %d\n", files_count);
-				file_list_size = files_count;
-				criu_files = malloc(sizeof(struct criu_file) * files_count);
+				*file_list_size = files_count;
+				*criu_files = calloc(1, sizeof(struct criu_file) * files_count);
 
 				int files_index = 0;
 				// Parse all file entries
@@ -87,16 +86,14 @@ static bool parse_files_image(struct criu_file * criu_files, int * file_list_siz
 					int end = tokens[i].end;
 					jsmntok_t * file_token = &tokens[i+4];
 					i += 4;
-					criu_files[y].id = strtoul(json + file_token->start, NULL, 10);
-					printf("%d: id:%d\n", y, criu_files[y].id);
+					(*criu_files)[y].id = strtoul(json + file_token->start, NULL, 10);
 					
 					while(i < items && tokens[i].start < end) {
 						if(jsoneq(json, &tokens[i], "name") == 0) {
 							int len = tokens[i+1].end - tokens[i+1].start + 1;
-							criu_files[y].name = malloc(len);
-							strncpy(criu_files[y].name, json + tokens[i+1].start, len - 1);
-							criu_files[y].name[len-1] = 0;
-							printf("name: %s\n", criu_files[y].name);
+							(*criu_files)[y].name = malloc(len);
+							strncpy((*criu_files)[y].name, json + tokens[i+1].start, len - 1);
+							(*criu_files)[y].name[len-1] = 0;
 							i++;
 						}
 						i++;
@@ -111,7 +108,7 @@ static bool parse_files_image(struct criu_file * criu_files, int * file_list_siz
 	return true;
 }
 
-static bool parse_fd_info(struct criu_fd_info * fd_info_files, int * fd_info_files_list, char * json, uint64_t file_size) {
+static bool parse_fd_info(struct criu_fd_info ** fd_info_files, int * fd_info_files_size, char * json, uint64_t file_size) {
 	// Initialize the JSMN json parser
 	jsmn_parser parser;
 	jsmn_init(&parser);
@@ -140,16 +137,16 @@ static bool parse_fd_info(struct criu_fd_info * fd_info_files, int * fd_info_fil
 				int fd_info_count = tokens[++i].size;
 				i++;
 
-				fd_info_files_list = fd_info_count;
-				fd_info_files = malloc(sizeof(struct criu_fd_info) * fd_info_count);
+				*fd_info_files_size = fd_info_count;
+				*fd_info_files = malloc(sizeof(struct criu_fd_info) * fd_info_count);
 
 				int fd_info_index = 0;
 				// Parse all pagemap entries
 				for(int y = 0; y < fd_info_count; y++, i += (tokens[i].size * 2) + 1) {
 					if(tokens[i].size == 4) {
 						// Parse the address, number of pages and initialize the flags.
-						fd_info_files[y].id = strtoul(json + tokens[i+2].start, NULL, 10);
-						fd_info_files[y].fd = strtoul(json + tokens[i+8].start, NULL, 10);
+						(*fd_info_files)[y].id = strtoul(json + tokens[i+2].start, NULL, 10);
+						(*fd_info_files)[y].fd = strtoul(json + tokens[i+8].start, NULL, 10);
 					}
 				}
 
@@ -497,16 +494,31 @@ int main(int argc, char *argv[])
 
 	int fd_info_list_size = 0;
 	struct criu_fd_info * fd_info_list = NULL;
-	if(!parse_fd_info(fd_info_list, &fd_info_list_size, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
+	if(!parse_fd_info(&fd_info_list, &fd_info_list_size, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
 		printf("Unable to parse: %s", filenames[FD_INFO_FILE]);
 		return -1;
 	}
 
 	int file_list_size = 0;
 	struct criu_file * file_list = NULL;
-	if(!parse_files_image(file_list, &file_list_size, files[FILES_FILE].buffer, files[FILES_FILE].file.file_size)) {
+	if(!parse_files_image(&file_list, &file_list_size, files[FILES_FILE].buffer, files[FILES_FILE].file.file_size)) {
 		printf("Unable to parse: %s", filenames[FILES_FILE]);
 		return -1;
+	}
+
+	for(int i = 0; i < fd_info_list_size; i++) {
+		struct criu_fd_info * fd = &fd_info_list[i];
+		printf("fd:%d belongs to id:%d\n", fd->fd, fd->id);
+	}
+	printf("\n");
+
+	for(int i = 0; i < file_list_size; i++) {
+		struct criu_file * fl = &file_list[i];
+
+		if(fl->name != NULL)
+			printf("id:%d belongs to name:%s\n", fl->id, fl->name);
+		else
+			printf("id:%d is probably tty\n", fl->id);
 	}
 
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
@@ -687,16 +699,11 @@ int main(int argc, char *argv[])
 	free(checkpoint_files);
 	free(fd_info_list);
 
-	for(int i = 0; i < fd_info_list_size; i++) {
-		struct criu_fd_info * f = &fd_info_list[i];
-		free(f);
-	}
-
 	for(int i = 0; i < file_list_size; i++) {
 		struct criu_file * f = &file_list[i];
 		free(f->name);
-		free(f);
 	}
+	free(file_list);
 
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		free(files[i].buffer);
