@@ -41,11 +41,66 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-#define CHECKPOINT_FILES 5 
+#define CHECKPOINT_FILES 7 
+#define CHECKPOINT_FILES_TO_TRANSFER 5
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
+
+struct fd_info {
+	int id;
+	int fd;
+};
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
+
+static bool parse_fd_info(struct fd_info * fd_info_files, char * json, uint64_t file_size) {
+	// Initialize the JSMN json parser
+	jsmn_parser parser;
+	jsmn_init(&parser);
+
+	// First only determine the number of tokens.
+	int items = jsmn_parse(&parser, json, file_size, NULL, 128);\
+
+	jsmntok_t tokens[items];
+	
+	// Reset position in stream
+	jsmn_init(&parser);
+	int left = jsmn_parse(&parser, json, file_size, tokens, items);
+
+	// Invalid file.
+	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+		DMSG("CRIU: INVALID JSON\n");
+		return false;
+	}
+
+	// Parse the JSON version of the core checkpoint file (example core-2956.img)
+	for(int i = 1; i < items; i++) {
+		// Find the 'entries' field in the file
+		if (jsoneq(json, &tokens[i], "entries") == 0) {
+			if(tokens[i+1].type == JSMN_ARRAY) {
+				// Allocate the required number of VMA area structs
+				int fd_info_count = tokens[++i].size;
+				i++;
+
+				fd_info_files = malloc(sizeof(struct fd_info) * fd_info_count);
+
+				int fd_info_index = 0;
+				// Parse all pagemap entries
+				for(int y = 0; y < fd_info_count; y++, i += (tokens[i].size * 2) + 1) {
+					if(tokens[i].size == 4) {
+						// Parse the address, number of pages and initialize the flags.
+						fd_info_files[y].id = strtoul(json + tokens[i+2].start, NULL, 10);
+						fd_info_files[y].fd = strtoul(json + tokens[i+8].start, NULL, 10);
+					}
+				}
+
+				return true;
+			}
+		}
+	}
+
+	return true;
+}
 
 void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
 	FILE *fpp = fopen(new_filename, "w+");
@@ -364,14 +419,8 @@ int main(int argc, char *argv[])
 	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%s.txt", argv[1]);
 	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img", argv[1]);
 	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", argv[2]);
-
-	// char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
-	// 	"core-3011.txt",
-	// 	"mm-3011.txt",
-	// 	"pagemap-3011.txt",
-	// 	"pages-1-3011.img",
-	// 	"condition"
-	// };
+	snprintf(filenames[FD_INFO_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "fdinfo-2.txt");
+	snprintf(filenames[FILES_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "files.txt");
 	
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
@@ -383,7 +432,14 @@ int main(int argc, char *argv[])
 		read_file(&files[i]);
 
 		// Increase the buffer size
-		shared_buffer_1_size += files[i].file.file_size;
+		if (i < CHECKPOINT_FILES_TO_TRANSFER)
+			shared_buffer_1_size += files[i].file.file_size;
+	}
+
+	struct fd_info * fd_info_list = NULL;
+	if(!parse_fd_info(fd_info_list, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
+		printf("Unable to parse: %s", filenames[FD_INFO_FILE]);
+		return -1;
 	}
 
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
@@ -397,7 +453,7 @@ int main(int argc, char *argv[])
 
 	printf("Loading checkpoint files into the buffer... ");
 	long shared_buffer_1_index = 0;
-	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
 		// First copy the data from the checkpoint file buffer to shared buffer 1 at the correct index
 		memcpy(shared_buffer_1 + shared_buffer_1_index, files[i].buffer, files[i].file.file_size);
 		// Store the index so we can send that info later in shared buffer 2
@@ -411,7 +467,7 @@ int main(int argc, char *argv[])
 
 	// Setup the structs that will go into shared buffer 2
 	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
-	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
 		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
 		checkpoint_files[i].file_size = files[i].file.file_size;
 		checkpoint_files[i].buffer_index = files[i].file.buffer_index;
@@ -443,7 +499,7 @@ int main(int argc, char *argv[])
 			res, err_origin);
 
 	// Setup shared memory buffer 2
-	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES;
+	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES_TO_TRANSFER;
 	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	shared_memory_2.buffer = checkpoint_files;
 
@@ -471,7 +527,7 @@ int main(int argc, char *argv[])
 
 #ifdef DEBUG
 	struct checkpoint_file * checkpoint_file_var = checkpoint_files;
-	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
 		printf("checkpoint file: type %lu - index %lu\t- size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
 	}
 #endif
@@ -488,8 +544,11 @@ int main(int argc, char *argv[])
 			res, err_origin);
 
 
+	long index = 0;
 	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
+	index += sizeof(enum criu_return_types);
 	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + sizeof(enum criu_return_types);
+	index += sizeof(struct criu_checkpoint_regs);
 
 	printf("TA returned from secure world: ");
 	switch(*return_type) {
@@ -498,8 +557,9 @@ int main(int argc, char *argv[])
 			break;
 		case CRIU_SYSCALL_OPENAT:
 			printf("at pc: %p\n", checkpoint_regs->entry_addr);
-			printf("OPENAT system call!: dfd: %d - filename: %p - flags: %p - umode: %p\n", 
-				checkpoint_regs->regs[0], checkpoint_regs->regs[1],
+			char * filename = op.params[0].memref.parent->buffer + index;
+			printf("OPENAT system call!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
+				checkpoint_regs->regs[0], filename,
 				checkpoint_regs->regs[2], checkpoint_regs->regs[3]);
 			break;
 		case CRIU_SYSCALL_UNSUPPORTED:
@@ -558,6 +618,7 @@ int main(int argc, char *argv[])
 	TEEC_ReleaseSharedMemory(&shared_memory_2);
 	free(shared_buffer_1);
 	free(checkpoint_files);
+	free(fd_info_list);
 
 	for(int i = 0; i < 5; i++) {
 		free(files[i].buffer);
