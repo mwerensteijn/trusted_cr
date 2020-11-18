@@ -652,6 +652,60 @@ int main(int argc, char *argv[])
 			case CRIU_SYSCALL_EXIT:
 				printf("EXIT system call!\n");
 				break;
+			case CRIU_SYSCALL_CLOSE:
+			{
+				printf("at pc: %p\n", checkpoint_regs->entry_addr);
+				int original_fd = checkpoint_regs->regs[0];
+
+				int fd = -1;
+				opened_file_index = opened_file_list;
+				do {
+					if(opened_file_index->original_fd == original_fd) {
+						fd = opened_file_index->fd;
+						break;
+					}
+					opened_file_index = opened_file_index->next;
+				} while(opened_file_index != NULL);
+
+
+				uint64_t * res = op.params[0].memref.parent->buffer + index;
+				index += sizeof(uint64_t);
+
+				printf("CLOSE system call: fd:%d - belongs to fd:%d\n", original_fd, fd);
+				*res = close(fd);
+
+				// TODO: Remove it from the proper lists
+
+				continue_execution = true;
+				break;
+			}
+			case CRIU_SYSCALL_READ:
+			{
+				printf("at pc: %p\n", checkpoint_regs->entry_addr);
+				int original_fd = checkpoint_regs->regs[0];
+				// char * filename = op.params[0].memref.parent->buffer + index;
+				int count = checkpoint_regs->regs[2];
+				printf("READ system call: fd:%d - buf:%p - count:%d\n", checkpoint_regs->regs[0], checkpoint_regs->regs[1], count);
+				
+				int fd = -1;
+				opened_file_index = opened_file_list;
+				do {
+					if(opened_file_index->original_fd == original_fd) {
+						fd = opened_file_index->fd;
+						break;
+					}
+					opened_file_index = opened_file_index->next;
+				} while(opened_file_index != NULL);
+
+				uint64_t * res = op.params[0].memref.parent->buffer + index;
+				index += sizeof(uint64_t);
+				*res = read(fd, op.params[0].memref.parent->buffer + index, count);
+				index += count;
+
+				continue_execution = true;
+
+				break;
+			}
 			case CRIU_SYSCALL_OPENAT:
 				printf("at pc: %p\n", checkpoint_regs->entry_addr);
 				int original_dfd = checkpoint_regs->regs[0];
@@ -788,6 +842,8 @@ int main(int argc, char *argv[])
 					res, err_origin);
 				break;
 			}
+		} else {
+			break;
 		}
 	} while(ret_type != CRIU_SYSCALL_EXIT &&
 		    ret_type != CRIU_SYSCALL_UNSUPPORTED);
