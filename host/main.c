@@ -30,7 +30,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#include <dirent.h>
 #include "jsmn.h"
+
+#define O_PATH		010000000
+
 
 #include "criu/criu_checkpoint.h"
 #include "criu/criu_checkpoint_parser.h"
@@ -108,7 +112,7 @@ static bool parse_files_image(struct criu_file ** criu_files, int * file_list_si
 	return true;
 }
 
-static bool parse_fd_info(struct criu_fd_info ** fd_info_files, int * fd_info_files_size, char * json, uint64_t file_size) {
+static bool parse_fd_info(struct criu_fd_info ** fd_info_files, int * fd_info_files_size, int * next_fd, char * json, uint64_t file_size) {
 	// Initialize the JSMN json parser
 	jsmn_parser parser;
 	jsmn_init(&parser);
@@ -147,9 +151,13 @@ static bool parse_fd_info(struct criu_fd_info ** fd_info_files, int * fd_info_fi
 						// Parse the address, number of pages and initialize the flags.
 						(*fd_info_files)[y].id = strtoul(json + tokens[i+2].start, NULL, 10);
 						(*fd_info_files)[y].fd = strtoul(json + tokens[i+8].start, NULL, 10);
+
+						if((*fd_info_files)[y].fd > *next_fd)
+							*next_fd = (*fd_info_files)[y].fd;
 					}
 				}
 
+				*next_fd = (*next_fd) + 1;
 				return true;
 			}
 		}
@@ -493,8 +501,9 @@ int main(int argc, char *argv[])
 	}
 
 	int fd_info_list_size = 0;
+	int next_fd = -1;
 	struct criu_fd_info * fd_info_list = NULL;
-	if(!parse_fd_info(&fd_info_list, &fd_info_list_size, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
+	if(!parse_fd_info(&fd_info_list, &fd_info_list_size, &next_fd, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
 		printf("Unable to parse: %s", filenames[FD_INFO_FILE]);
 		return -1;
 	}
@@ -504,21 +513,6 @@ int main(int argc, char *argv[])
 	if(!parse_files_image(&file_list, &file_list_size, files[FILES_FILE].buffer, files[FILES_FILE].file.file_size)) {
 		printf("Unable to parse: %s", filenames[FILES_FILE]);
 		return -1;
-	}
-
-	for(int i = 0; i < fd_info_list_size; i++) {
-		struct criu_fd_info * fd = &fd_info_list[i];
-		printf("fd:%d belongs to id:%d\n", fd->fd, fd->id);
-	}
-	printf("\n");
-
-	for(int i = 0; i < file_list_size; i++) {
-		struct criu_file * fl = &file_list[i];
-
-		if(fl->name != NULL)
-			printf("id:%d belongs to name:%s\n", fl->id, fl->name);
-		else
-			printf("id:%d is probably tty\n", fl->id);
 	}
 
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
@@ -629,6 +623,24 @@ int main(int argc, char *argv[])
 	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + sizeof(enum criu_return_types);
 	index += sizeof(struct criu_checkpoint_regs);
 
+	struct opened_dir {
+		int original_dfd;
+		int dfd;
+		struct opened_dir * next;
+	};
+
+	struct opened_dir * opened_dir_list = NULL;
+	struct opened_dir * opened_dir_index = opened_dir_list;
+
+	struct opened_file {
+		int original_fd;
+		int fd;
+		struct opened_file * next;
+	};
+
+	struct opened_file * opened_file_list = NULL;
+	struct opened_file * opened_file_index = opened_file_list;
+
 	printf("TA returned from secure world: ");
 	switch(*return_type) {
 		case CRIU_SYSCALL_EXIT:
@@ -636,10 +648,87 @@ int main(int argc, char *argv[])
 			break;
 		case CRIU_SYSCALL_OPENAT:
 			printf("at pc: %p\n", checkpoint_regs->entry_addr);
+			int original_dfd = checkpoint_regs->regs[0];
 			char * filename = op.params[0].memref.parent->buffer + index;
-			printf("OPENAT system call!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
-				checkpoint_regs->regs[0], filename,
-				checkpoint_regs->regs[2], checkpoint_regs->regs[3]);
+			int flags = checkpoint_regs->regs[2];
+			int mode = checkpoint_regs->regs[3];
+			printf("OPENAT system call @ %p!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
+				checkpoint_regs->entry_addr, original_dfd, filename, flags, mode);
+
+			int dfd = -1;
+			if(opened_dir_index != NULL) {
+				do {
+					if(opened_dir_index->original_dfd == original_dfd) {
+						printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
+						dfd = opened_dir_index->dfd;
+						break;
+					}
+					opened_dir_index = opened_dir_index->next;
+				} while(opened_dir_index->next !=  NULL);
+			}
+
+			if(dfd == -1) {
+				int id = -1;
+				for(int i = 0; i < fd_info_list_size; i++) {
+					struct criu_fd_info * fd = &fd_info_list[i];
+					if(fd->fd == original_dfd) {
+						id = fd->id;
+						break;
+					}
+				}
+
+				char * dirFilename = NULL;
+				if(id != -1) {
+					for(int i = 0; i < file_list_size; i++) {
+						struct criu_file * fl = &file_list[i];
+
+						if(id == fl->id) {
+							dirFilename = fl->name;
+							printf("dfd: %d belongs to dir: %s\n", original_dfd, dirFilename);
+							break;
+						}
+					}
+				} else {
+					printf("dfd %d could not be found :(\n", original_dfd);
+					break;
+				}
+
+				dfd = open(dirFilename, O_PATH);
+				if(opened_dir_index == NULL) {
+					opened_dir_list = calloc(1, sizeof(struct opened_dir));
+					opened_dir_list->dfd = dfd;
+					opened_dir_list->original_dfd = original_dfd;
+				} else {
+					opened_dir_index->next = calloc(1, sizeof(struct opened_dir));
+					opened_dir_index->next->dfd = dfd;
+					opened_dir_index->next->original_dfd = original_dfd;
+				}
+			}
+
+			*return_type = CRIU_SYSCALL_OPENAT;
+			if(dfd) {
+				printf("Dirfd obtained!: %d\n", dfd);
+
+				uint64_t res = openat(dfd, filename, flags, mode);
+				printf("res: %d\n", res);
+
+				if(opened_file_index == NULL) {
+					opened_file_list = calloc(1, sizeof(struct opened_dir));
+					opened_file_list->fd = res;
+					opened_file_list->original_fd = next_fd++;
+				} else {
+					opened_file_index->next = calloc(1, sizeof(struct opened_dir));
+					opened_file_index->next->fd = res;
+					opened_file_index->next->original_fd = next_fd++;
+				}
+				memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
+			} else {
+				puts("Unable to read directory, we need to return -1?\n");
+				int res = -1;
+				memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
+				break;
+			}
+
 			break;
 		case CRIU_SYSCALL_UNSUPPORTED:
 			printf("unsupported system call.\n");
@@ -650,13 +739,13 @@ int main(int argc, char *argv[])
 	}
 
 
-	// printf("\nContinuing execution\n");
-	// res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-	// 			&err_origin);
-	// if (res != TEEC_SUCCESS)
-	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-	// 		res, err_origin);
-	// printf("TA returned from secure world\n");
+	printf("\nContinuing execution\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
 	
 	// printf("\nCheckpointing data back\n");
 	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
@@ -714,6 +803,23 @@ int main(int argc, char *argv[])
 	TAILQ_FOREACH(entry, &pagemap_entries, link) {
 		free(entry);
 	}
+
+	opened_dir_index = opened_dir_list;
+	do {
+		struct opened_dir * current = opened_dir_index;
+		close(current->dfd);
+		opened_dir_index = opened_dir_index->next;
+		free(current);
+	} while(opened_dir_index != NULL);
+
+	opened_file_index = opened_file_list;
+	do {
+		struct opened_file * current = opened_file_index;
+		close(opened_file_index->fd);
+		opened_file_index = opened_file_index->next;
+		free(current);
+	} while(opened_file_index != NULL);
+
 
 	/*
 	 * We're done with the TA, close the session and
