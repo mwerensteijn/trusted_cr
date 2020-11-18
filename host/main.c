@@ -638,14 +638,17 @@ int main(int argc, char *argv[])
 	struct opened_file * opened_file_index = opened_file_list;
 
 	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
+	enum criu_return_types ret_type;
 	do {
+		ret_type = *return_type;
+		bool continue_execution = false;
 		long index = 0;
 		index += sizeof(enum criu_return_types);
 		struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
 		index += sizeof(struct criu_checkpoint_regs);
 
 		printf("TA returned from secure world: ");
-		switch(*return_type) {
+		switch(ret_type) {
 			case CRIU_SYSCALL_EXIT:
 				printf("EXIT system call!\n");
 				break;
@@ -732,6 +735,8 @@ int main(int argc, char *argv[])
 					break;
 				}
 
+				continue_execution = true;
+
 				break;
 			case CRIU_SYSCALL_FSTAT:
 				printf("FSTAT syscall at pc: %p\n", checkpoint_regs->entry_addr);
@@ -763,6 +768,7 @@ int main(int argc, char *argv[])
 				checkpoint_regs->regs[0] = fstat(fd, s);
 
 				printf("fstat returned: %d\n", checkpoint_regs->regs[0]);
+				continue_execution = true;
 
 				break;
 			case CRIU_SYSCALL_UNSUPPORTED:
@@ -773,17 +779,18 @@ int main(int argc, char *argv[])
 				break;
 		}
 
-		printf("\nContinuing execution\n");
-		res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-					&err_origin);
-		if (res != TEEC_SUCCESS) {
-			errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-				res, err_origin);
-			break;
+		if(continue_execution) {
+			printf("\nContinuing execution\n");
+			res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+						&err_origin);
+			if (res != TEEC_SUCCESS) {
+				errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+					res, err_origin);
+				break;
+			}
 		}
-	} while(*return_type != CRIU_SYSCALL_EXIT ||
-		    *return_type != CRIU_SYSCALL_UNSUPPORTED ||
-		    *return_type != CRIU_SYSCALL_FSTAT);
+	} while(ret_type != CRIU_SYSCALL_EXIT &&
+		    ret_type != CRIU_SYSCALL_UNSUPPORTED);
 	
 	// printf("\nCheckpointing data back\n");
 	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
