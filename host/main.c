@@ -31,6 +31,9 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "jsmn.h"
 
 #define O_PATH		010000000
@@ -616,13 +619,6 @@ int main(int argc, char *argv[])
 		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-
-	long index = 0;
-	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
-	index += sizeof(enum criu_return_types);
-	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + sizeof(enum criu_return_types);
-	index += sizeof(struct criu_checkpoint_regs);
-
 	struct opened_dir {
 		int original_dfd;
 		int dfd;
@@ -641,111 +637,153 @@ int main(int argc, char *argv[])
 	struct opened_file * opened_file_list = NULL;
 	struct opened_file * opened_file_index = opened_file_list;
 
-	printf("TA returned from secure world: ");
-	switch(*return_type) {
-		case CRIU_SYSCALL_EXIT:
-			printf("EXIT system call!\n");
-			break;
-		case CRIU_SYSCALL_OPENAT:
-			printf("at pc: %p\n", checkpoint_regs->entry_addr);
-			int original_dfd = checkpoint_regs->regs[0];
-			char * filename = op.params[0].memref.parent->buffer + index;
-			int flags = checkpoint_regs->regs[2];
-			int mode = checkpoint_regs->regs[3];
-			printf("OPENAT system call @ %p!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
-				checkpoint_regs->entry_addr, original_dfd, filename, flags, mode);
+	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
+	do {
+		long index = 0;
+		index += sizeof(enum criu_return_types);
+		struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
+		index += sizeof(struct criu_checkpoint_regs);
 
-			int dfd = -1;
-			if(opened_dir_index != NULL) {
-				do {
-					if(opened_dir_index->original_dfd == original_dfd) {
-						printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
-						dfd = opened_dir_index->dfd;
-						break;
-					}
-					opened_dir_index = opened_dir_index->next;
-				} while(opened_dir_index->next !=  NULL);
-			}
+		printf("TA returned from secure world: ");
+		switch(*return_type) {
+			case CRIU_SYSCALL_EXIT:
+				printf("EXIT system call!\n");
+				break;
+			case CRIU_SYSCALL_OPENAT:
+				printf("at pc: %p\n", checkpoint_regs->entry_addr);
+				int original_dfd = checkpoint_regs->regs[0];
+				char * filename = op.params[0].memref.parent->buffer + index;
+				int flags = checkpoint_regs->regs[2];
+				int mode = checkpoint_regs->regs[3];
+				printf("OPENAT system call @ %p!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
+					checkpoint_regs->entry_addr, original_dfd, filename, flags, mode);
 
-			if(dfd == -1) {
-				int id = -1;
-				for(int i = 0; i < fd_info_list_size; i++) {
-					struct criu_fd_info * fd = &fd_info_list[i];
-					if(fd->fd == original_dfd) {
-						id = fd->id;
-						break;
-					}
+				int dfd = -1;
+				if(opened_dir_index != NULL) {
+					do {
+						if(opened_dir_index->original_dfd == original_dfd) {
+							printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
+							dfd = opened_dir_index->dfd;
+							break;
+						}
+						opened_dir_index = opened_dir_index->next;
+					} while(opened_dir_index->next !=  NULL);
 				}
 
-				char * dirFilename = NULL;
-				if(id != -1) {
-					for(int i = 0; i < file_list_size; i++) {
-						struct criu_file * fl = &file_list[i];
-
-						if(id == fl->id) {
-							dirFilename = fl->name;
-							printf("dfd: %d belongs to dir: %s\n", original_dfd, dirFilename);
+				if(dfd == -1) {
+					int id = -1;
+					for(int i = 0; i < fd_info_list_size; i++) {
+						struct criu_fd_info * fd = &fd_info_list[i];
+						if(fd->fd == original_dfd) {
+							id = fd->id;
 							break;
 						}
 					}
+
+					char * dirFilename = NULL;
+					if(id != -1) {
+						for(int i = 0; i < file_list_size; i++) {
+							struct criu_file * fl = &file_list[i];
+
+							if(id == fl->id) {
+								dirFilename = fl->name;
+								printf("dfd: %d belongs to dir: %s\n", original_dfd, dirFilename);
+								break;
+							}
+						}
+					} else {
+						printf("dfd %d could not be found :(\n", original_dfd);
+						break;
+					}
+
+					dfd = open(dirFilename, O_PATH);
+					if(opened_dir_index == NULL) {
+						opened_dir_list = calloc(1, sizeof(struct opened_dir));
+						opened_dir_list->dfd = dfd;
+						opened_dir_list->original_dfd = original_dfd;
+					} else {
+						opened_dir_index->next = calloc(1, sizeof(struct opened_dir));
+						opened_dir_index->next->dfd = dfd;
+						opened_dir_index->next->original_dfd = original_dfd;
+					}
+				}
+
+				*return_type = CRIU_SYSCALL_OPENAT;
+				if(dfd) {
+					printf("Dirfd obtained!: %d\n", dfd);
+
+					uint64_t res = openat(dfd, filename, flags, mode);
+					printf("res: %d\n", res);
+
+					if(opened_file_index == NULL) {
+						opened_file_list = calloc(1, sizeof(struct opened_dir));
+						opened_file_list->fd = res;
+						opened_file_list->original_fd = next_fd++;
+					} else {
+						opened_file_index->next = calloc(1, sizeof(struct opened_dir));
+						opened_file_index->next->fd = res;
+						opened_file_index->next->original_fd = next_fd++;
+					}
+					memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
 				} else {
-					printf("dfd %d could not be found :(\n", original_dfd);
+					puts("Unable to read directory, we need to return -1?\n");
+					int res = -1;
+					memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
 					break;
 				}
 
-				dfd = open(dirFilename, O_PATH);
-				if(opened_dir_index == NULL) {
-					opened_dir_list = calloc(1, sizeof(struct opened_dir));
-					opened_dir_list->dfd = dfd;
-					opened_dir_list->original_dfd = original_dfd;
-				} else {
-					opened_dir_index->next = calloc(1, sizeof(struct opened_dir));
-					opened_dir_index->next->dfd = dfd;
-					opened_dir_index->next->original_dfd = original_dfd;
-				}
-			}
-
-			*return_type = CRIU_SYSCALL_OPENAT;
-			if(dfd) {
-				printf("Dirfd obtained!: %d\n", dfd);
-
-				uint64_t res = openat(dfd, filename, flags, mode);
-				printf("res: %d\n", res);
-
-				if(opened_file_index == NULL) {
-					opened_file_list = calloc(1, sizeof(struct opened_dir));
-					opened_file_list->fd = res;
-					opened_file_list->original_fd = next_fd++;
-				} else {
-					opened_file_index->next = calloc(1, sizeof(struct opened_dir));
-					opened_file_index->next->fd = res;
-					opened_file_index->next->original_fd = next_fd++;
-				}
-				memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
-			} else {
-				puts("Unable to read directory, we need to return -1?\n");
-				int res = -1;
-				memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
 				break;
-			}
+			case CRIU_SYSCALL_FSTAT:
+				printf("FSTAT syscall at pc: %p\n", checkpoint_regs->entry_addr);
+				int original_fd = checkpoint_regs->regs[0];
+				int fd = -1;
+				opened_file_index = opened_file_list;
+				do {
+					if(opened_file_index->original_fd == original_fd) {
+						printf("We already have opened this file!: %d - %d\n", opened_file_index->original_fd, opened_file_index->fd);
+						fd = opened_file_index->fd;
+						break;
+					}
+					opened_file_index = opened_file_index->next;
+				} while(opened_file_index->next !=  NULL);
 
-			break;
-		case CRIU_SYSCALL_UNSUPPORTED:
-			printf("unsupported system call.\n");
-			break;
-		default:
-			printf("no idea what happened.\n");
-			break;
-	}
+				if(fd == -1) {
+					printf("We don't have opened this file yet :(\n");
+				} else {
+					printf("yeah this file is open!\n");
+				}
 
+				uint64_t * size = op.params[0].memref.parent->buffer + index;
+				*size = sizeof(struct stat);
+				index += sizeof(uint64_t);
 
-	printf("\nContinuing execution\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-			res, err_origin);
-	printf("TA returned from secure world\n");
+				struct stat * s = op.params[0].memref.parent->buffer + index;
+				index += sizeof(struct stat);
+
+				checkpoint_regs->regs[0] = fstat(fd, s);
+
+				printf("fstat returned: %d\n", checkpoint_regs->regs[0]);
+
+				break;
+			case CRIU_SYSCALL_UNSUPPORTED:
+				printf("unsupported system call.\n");
+				break;
+			default:
+				printf("no idea what happened.\n");
+				break;
+		}
+
+		printf("\nContinuing execution\n");
+		res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+					&err_origin);
+		if (res != TEEC_SUCCESS) {
+			errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+				res, err_origin);
+			break;
+		}
+	} while(*return_type != CRIU_SYSCALL_EXIT ||
+		    *return_type != CRIU_SYSCALL_UNSUPPORTED ||
+		    *return_type != CRIU_SYSCALL_FSTAT);
 	
 	// printf("\nCheckpointing data back\n");
 	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
