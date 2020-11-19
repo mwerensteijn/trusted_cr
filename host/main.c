@@ -792,7 +792,44 @@ int main(int argc, char *argv[])
 				continue_execution = true;
 
 				break;
+			case CRIU_SYSCALL_NEWFSTATAT:
+			{
+				printf("at pc: %p\n", checkpoint_regs->entry_addr);
+				int original_dfd = checkpoint_regs->regs[0];
+				char * filename = op.params[0].memref.parent->buffer + index;
+				int flags = checkpoint_regs->regs[4];
+				printf("NEWFSTATAT system call @ %p!: dfd: %d - filename: %s - flags: %p\n", 
+					checkpoint_regs->entry_addr, original_dfd, filename, flags);
+
+				int dfd = -1;
+				opened_dir_index = opened_dir_list;
+				if(opened_dir_index != NULL) {
+					do {
+						if(opened_dir_index->original_dfd == original_dfd) {
+							printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
+							dfd = opened_dir_index->dfd;
+							break;
+						}
+						opened_dir_index = opened_dir_index->next;
+					} while(opened_dir_index->next !=  NULL);
+				}
+
+				uint64_t * size = op.params[0].memref.parent->buffer + index;
+				index += sizeof(uint64_t);
+
+				struct stat * s = op.params[0].memref.parent->buffer + index;
+				index += sizeof(struct stat);
+
+				checkpoint_regs->regs[0] = fstatat(dfd, filename, s, flags);
+				*size = sizeof(struct stat);
+
+				printf("fstatat returned with: %d\n", checkpoint_regs->regs[0]);
+				continue_execution = true;
+
+				break;
+			}
 			case CRIU_SYSCALL_FSTAT:
+			{
 				printf("FSTAT syscall at pc: %p\n", checkpoint_regs->entry_addr);
 				int original_fd = checkpoint_regs->regs[0];
 				int fd = -1;
@@ -825,6 +862,7 @@ int main(int argc, char *argv[])
 				continue_execution = true;
 
 				break;
+			}
 			case CRIU_SYSCALL_UNSUPPORTED:
 				printf("unsupported system call.\n");
 				break;
