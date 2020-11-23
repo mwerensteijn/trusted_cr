@@ -699,7 +699,7 @@ int main(int argc, char *argv[])
 
 				uint64_t * res = op.params[0].memref.parent->buffer + index;
 				index += sizeof(uint64_t);
-				*res = read(fd, op.params[0].memref.parent->buffer + index, count);
+				*res = (uint64_t) read(fd, op.params[0].memref.parent->buffer + index, count);
 				index += count;
 
 				continue_execution = true;
