@@ -48,126 +48,12 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-#define CHECKPOINT_FILES 7 
+#define CHECKPOINT_FILES 5 
 #define CHECKPOINT_FILES_TO_TRANSFER 5
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
-
-static bool parse_files_image(struct criu_file ** criu_files, int * file_list_size, char * json, uint64_t file_size) {
-	// Initialize the JSMN json parser
-	jsmn_parser parser;
-	jsmn_init(&parser);
-
-	// First only determine the number of tokens.
-	int items = jsmn_parse(&parser, json, file_size, NULL, 128);
-
-	jsmntok_t tokens[items];
-	
-	// Reset position in stream
-	jsmn_init(&parser);
-	int left = jsmn_parse(&parser, json, file_size, tokens, items);
-
-	// Invalid file.
-	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-		DMSG("CRIU: INVALID JSON\n");
-		return false;
-	}
-
-	// Parse the JSON version of the core checkpoint file (example core-2956.img)
-	for(int i = 1; i < items; i++) {
-		// Find the 'entries' field in the file
-		if (jsoneq(json, &tokens[i], "entries") == 0) {
-			if(tokens[i+1].type == JSMN_ARRAY) {
-				// Allocate the required number of file entries
-				int files_count = tokens[++i].size;
-				i++;
-
-				*file_list_size = files_count;
-				*criu_files = calloc(1, sizeof(struct criu_file) * files_count);
-
-				int files_index = 0;
-				// Parse all file entries
-				for(int y = 0; y < files_count; y++) {
-					int end = tokens[i].end;
-					jsmntok_t * file_token = &tokens[i+4];
-					i += 4;
-					(*criu_files)[y].id = strtoul(json + file_token->start, NULL, 10);
-					
-					while(i < items && tokens[i].start < end) {
-						if(jsoneq(json, &tokens[i], "name") == 0) {
-							int len = tokens[i+1].end - tokens[i+1].start + 1;
-							(*criu_files)[y].name = malloc(len);
-							strncpy((*criu_files)[y].name, json + tokens[i+1].start, len - 1);
-							(*criu_files)[y].name[len-1] = 0;
-							i++;
-						}
-						i++;
-					}
-				}
-
-				return true;
-			}
-		}
-	}
-
-	return true;
-}
-
-static bool parse_fd_info(struct criu_fd_info ** fd_info_files, int * fd_info_files_size, int * next_fd, char * json, uint64_t file_size) {
-	// Initialize the JSMN json parser
-	jsmn_parser parser;
-	jsmn_init(&parser);
-
-	// First only determine the number of tokens.
-	int items = jsmn_parse(&parser, json, file_size, NULL, 128);\
-
-	jsmntok_t tokens[items];
-	
-	// Reset position in stream
-	jsmn_init(&parser);
-	int left = jsmn_parse(&parser, json, file_size, tokens, items);
-
-	// Invalid file.
-	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-		DMSG("CRIU: INVALID JSON\n");
-		return false;
-	}
-
-	// Parse the JSON version of the core checkpoint file (example core-2956.img)
-	for(int i = 1; i < items; i++) {
-		// Find the 'entries' field in the file
-		if (jsoneq(json, &tokens[i], "entries") == 0) {
-			if(tokens[i+1].type == JSMN_ARRAY) {
-				// Allocate the required number of VMA area structs
-				int fd_info_count = tokens[++i].size;
-				i++;
-
-				*fd_info_files_size = fd_info_count;
-				*fd_info_files = malloc(sizeof(struct criu_fd_info) * fd_info_count);
-
-				int fd_info_index = 0;
-				// Parse all pagemap entries
-				for(int y = 0; y < fd_info_count; y++, i += (tokens[i].size * 2) + 1) {
-					if(tokens[i].size == 4) {
-						// Parse the address, number of pages and initialize the flags.
-						(*fd_info_files)[y].id = strtoul(json + tokens[i+2].start, NULL, 10);
-						(*fd_info_files)[y].fd = strtoul(json + tokens[i+8].start, NULL, 10);
-
-						if((*fd_info_files)[y].fd > *next_fd)
-							*next_fd = (*fd_info_files)[y].fd;
-					}
-				}
-
-				*next_fd = (*next_fd) + 1;
-				return true;
-			}
-		}
-	}
-
-	return true;
-}
 
 void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
 	FILE *fpp = fopen(new_filename, "w+");
@@ -486,8 +372,6 @@ int main(int argc, char *argv[])
 	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%s.txt", argv[1]);
 	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img", argv[1]);
 	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", argv[2]);
-	snprintf(filenames[FD_INFO_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "fdinfo-2.txt");
-	snprintf(filenames[FILES_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "files.txt");
 	
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
@@ -501,21 +385,6 @@ int main(int argc, char *argv[])
 		// Increase the buffer size
 		if (i < CHECKPOINT_FILES_TO_TRANSFER)
 			shared_buffer_1_size += files[i].file.file_size;
-	}
-
-	int fd_info_list_size = 0;
-	int next_fd = -1;
-	struct criu_fd_info * fd_info_list = NULL;
-	if(!parse_fd_info(&fd_info_list, &fd_info_list_size, &next_fd, files[FD_INFO_FILE].buffer, files[FD_INFO_FILE].file.file_size)) {
-		printf("Unable to parse: %s", filenames[FD_INFO_FILE]);
-		return -1;
-	}
-
-	int file_list_size = 0;
-	struct criu_file * file_list = NULL;
-	if(!parse_files_image(&file_list, &file_list_size, files[FILES_FILE].buffer, files[FILES_FILE].file.file_size)) {
-		printf("Unable to parse: %s", filenames[FILES_FILE]);
-		return -1;
 	}
 
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
@@ -619,24 +488,6 @@ int main(int argc, char *argv[])
 		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
 			res, err_origin);
 
-	struct opened_dir {
-		int original_dfd;
-		int dfd;
-		struct opened_dir * next;
-	};
-
-	struct opened_dir * opened_dir_list = NULL;
-	struct opened_dir * opened_dir_index = opened_dir_list;
-
-	struct opened_file {
-		int original_fd;
-		int fd;
-		struct opened_file * next;
-	};
-
-	struct opened_file * opened_file_list = NULL;
-	struct opened_file * opened_file_index = opened_file_list;
-
 	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
 	enum criu_return_types ret_type;
 	do {
@@ -710,21 +561,15 @@ int main(int argc, char *argv[])
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
 	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
-
+	
 	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
 	TEEC_ReleaseSharedMemory(&shared_memory_2);
+
 	free(shared_buffer_1);
 	free(checkpoint_files);
-	free(fd_info_list);
-
-	for(int i = 0; i < file_list_size; i++) {
-		struct criu_file * f = &file_list[i];
-		free(f->name);
-	}
-	free(file_list);
 
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
 		free(files[i].buffer);
@@ -735,23 +580,6 @@ int main(int argc, char *argv[])
 	TAILQ_FOREACH(entry, &pagemap_entries, link) {
 		free(entry);
 	}
-
-	opened_dir_index = opened_dir_list;
-	do {
-		struct opened_dir * current = opened_dir_index;
-		close(current->dfd);
-		opened_dir_index = opened_dir_index->next;
-		free(current);
-	} while(opened_dir_index != NULL);
-
-	opened_file_index = opened_file_list;
-	do {
-		struct opened_file * current = opened_file_index;
-		close(opened_file_index->fd);
-		opened_file_index = opened_file_index->next;
-		free(current);
-	} while(opened_file_index != NULL);
-
 
 	/*
 	 * We're done with the TA, close the session and
