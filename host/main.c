@@ -652,219 +652,11 @@ int main(int argc, char *argv[])
 			case CRIU_SYSCALL_EXIT:
 				printf("EXIT system call!\n");
 				break;
-			case CRIU_SYSCALL_CLOSE:
-			{
-				printf("at pc: %p\n", checkpoint_regs->entry_addr);
-				int original_fd = checkpoint_regs->regs[0];
-
-				int fd = -1;
-				opened_file_index = opened_file_list;
-				do {
-					if(opened_file_index->original_fd == original_fd) {
-						fd = opened_file_index->fd;
-						break;
-					}
-					opened_file_index = opened_file_index->next;
-				} while(opened_file_index != NULL);
-
-
-				uint64_t * res = op.params[0].memref.parent->buffer + index;
-				index += sizeof(uint64_t);
-
-				printf("CLOSE system call: fd:%d - belongs to fd:%d\n", original_fd, fd);
-				*res = close(fd);
-
-				// TODO: Remove it from the proper lists
-
-				continue_execution = true;
-				break;
-			}
-			case CRIU_SYSCALL_READ:
-			{
-				printf("at pc: %p\n", checkpoint_regs->entry_addr);
-				int original_fd = checkpoint_regs->regs[0];
-				// char * filename = op.params[0].memref.parent->buffer + index;
-				int count = checkpoint_regs->regs[2];
-				printf("READ system call: fd:%d - buf:%p - count:%d\n", checkpoint_regs->regs[0], checkpoint_regs->regs[1], count);
-				
-				int fd = -1;
-				opened_file_index = opened_file_list;
-				do {
-					if(opened_file_index->original_fd == original_fd) {
-						fd = opened_file_index->fd;
-						break;
-					}
-					opened_file_index = opened_file_index->next;
-				} while(opened_file_index != NULL);
-
-				uint64_t * res = op.params[0].memref.parent->buffer + index;
-				index += sizeof(uint64_t);
-				*res = (uint64_t) read(fd, op.params[0].memref.parent->buffer + index, count);
-				index += count;
-
-				continue_execution = true;
-
-				break;
-			}
-			case CRIU_SYSCALL_OPENAT:
-				printf("at pc: %p\n", checkpoint_regs->entry_addr);
-				int original_dfd = checkpoint_regs->regs[0];
-				char * filename = op.params[0].memref.parent->buffer + index;
-				int flags = checkpoint_regs->regs[2];
-				int mode = checkpoint_regs->regs[3];
-				printf("OPENAT system call @ %p!: dfd: %d - filename: %s - flags: %p - umode: %p\n", 
-					checkpoint_regs->entry_addr, original_dfd, filename, flags, mode);
-
-				int dfd = -1;
-				if(opened_dir_index != NULL) {
-					do {
-						if(opened_dir_index->original_dfd == original_dfd) {
-							printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
-							dfd = opened_dir_index->dfd;
-							break;
-						}
-						opened_dir_index = opened_dir_index->next;
-					} while(opened_dir_index->next !=  NULL);
-				}
-
-				if(dfd == -1) {
-					int id = -1;
-					for(int i = 0; i < fd_info_list_size; i++) {
-						struct criu_fd_info * fd = &fd_info_list[i];
-						if(fd->fd == original_dfd) {
-							id = fd->id;
-							break;
-						}
-					}
-
-					char * dirFilename = NULL;
-					if(id != -1) {
-						for(int i = 0; i < file_list_size; i++) {
-							struct criu_file * fl = &file_list[i];
-
-							if(id == fl->id) {
-								dirFilename = fl->name;
-								printf("dfd: %d belongs to dir: %s\n", original_dfd, dirFilename);
-								break;
-							}
-						}
-					} else {
-						printf("dfd %d could not be found :(\n", original_dfd);
-						break;
-					}
-
-					dfd = open(dirFilename, O_PATH);
-					if(opened_dir_index == NULL) {
-						opened_dir_list = calloc(1, sizeof(struct opened_dir));
-						opened_dir_list->dfd = dfd;
-						opened_dir_list->original_dfd = original_dfd;
-					} else {
-						opened_dir_index->next = calloc(1, sizeof(struct opened_dir));
-						opened_dir_index->next->dfd = dfd;
-						opened_dir_index->next->original_dfd = original_dfd;
-					}
-				}
-
-				*return_type = CRIU_SYSCALL_OPENAT;
-				if(dfd) {
-					printf("Dirfd obtained!: %d\n", dfd);
-
-					uint64_t res = openat(dfd, filename, flags, mode);
-					printf("res: %d\n", res);
-
-					if(opened_file_index == NULL) {
-						opened_file_list = calloc(1, sizeof(struct opened_dir));
-						opened_file_list->fd = res;
-						opened_file_list->original_fd = next_fd++;
-					} else {
-						opened_file_index->next = calloc(1, sizeof(struct opened_dir));
-						opened_file_index->next->fd = res;
-						opened_file_index->next->original_fd = next_fd++;
-					}
-					memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
-				} else {
-					puts("Unable to read directory, we need to return -1?\n");
-					int res = -1;
-					memcpy(op.params[0].memref.parent->buffer + sizeof(enum criu_return_types), &res, sizeof(uint64_t));
-					break;
-				}
-
-				continue_execution = true;
-
-				break;
-			case CRIU_SYSCALL_NEWFSTATAT:
-			{
-				printf("at pc: %p\n", checkpoint_regs->entry_addr);
-				int original_dfd = checkpoint_regs->regs[0];
-				char * filename = op.params[0].memref.parent->buffer + index;
-				int flags = checkpoint_regs->regs[4];
-				printf("NEWFSTATAT system call @ %p!: dfd: %d - filename: %s - flags: %p\n", 
-					checkpoint_regs->entry_addr, original_dfd, filename, flags);
-
-				int dfd = -1;
-				opened_dir_index = opened_dir_list;
-				if(opened_dir_index != NULL) {
-					do {
-						if(opened_dir_index->original_dfd == original_dfd) {
-							printf("We already have opened this dir: %d - %d\n", opened_dir_index->original_dfd, opened_dir_index->dfd);
-							dfd = opened_dir_index->dfd;
-							break;
-						}
-						opened_dir_index = opened_dir_index->next;
-					} while(opened_dir_index->next !=  NULL);
-				}
-
-				uint64_t * size = op.params[0].memref.parent->buffer + index;
-				index += sizeof(uint64_t);
-
-				struct stat * s = op.params[0].memref.parent->buffer + index;
-				index += sizeof(struct stat);
-
-				checkpoint_regs->regs[0] = fstatat(dfd, filename, s, flags);
-				*size = sizeof(struct stat);
-
-				printf("fstatat returned with: %d\n", checkpoint_regs->regs[0]);
-				continue_execution = true;
-
-				break;
-			}
-			case CRIU_SYSCALL_FSTAT:
-			{
-				printf("FSTAT syscall at pc: %p\n", checkpoint_regs->entry_addr);
-				int original_fd = checkpoint_regs->regs[0];
-				int fd = -1;
-				opened_file_index = opened_file_list;
-				do {
-					if(opened_file_index->original_fd == original_fd) {
-						printf("We already have opened this file!: %d - %d\n", opened_file_index->original_fd, opened_file_index->fd);
-						fd = opened_file_index->fd;
-						break;
-					}
-					opened_file_index = opened_file_index->next;
-				} while(opened_file_index->next !=  NULL);
-
-				if(fd == -1) {
-					printf("We don't have opened this file yet :(\n");
-				} else {
-					printf("yeah this file is open!\n");
-				}
-
-				uint64_t * size = op.params[0].memref.parent->buffer + index;
-				*size = sizeof(struct stat);
-				index += sizeof(uint64_t);
-
-				struct stat * s = op.params[0].memref.parent->buffer + index;
-				index += sizeof(struct stat);
-
-				checkpoint_regs->regs[0] = fstat(fd, s);
-
-				printf("fstat returned: %d\n", checkpoint_regs->regs[0]);
-				continue_execution = true;
-
-				break;
-			}
 			case CRIU_SYSCALL_UNSUPPORTED:
 				printf("unsupported system call.\n");
+				break;
+			case CRIU_MIGRATE_BACK:
+				printf("Secure world wants to migrate back.\n");
 				break;
 			default:
 				printf("no idea what happened.\n");
@@ -884,15 +676,16 @@ int main(int argc, char *argv[])
 			break;
 		}
 	} while(ret_type != CRIU_SYSCALL_EXIT &&
-		    ret_type != CRIU_SYSCALL_UNSUPPORTED);
+		    ret_type != CRIU_SYSCALL_UNSUPPORTED &&
+			ret_type != CRIU_MIGRATE_BACK);
 	
-	// printf("\nCheckpointing data back\n");
-	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
-	// 			&err_origin);
-	// if (res != TEEC_SUCCESS)
-	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
-	// 		res, err_origin);
-	// printf("TA returned from secure world\n");
+	printf("\nCheckpointing data back\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+			res, err_origin);
+	printf("TA returned from secure world\n");
 
 			// As the memory buffers where shared, the data can be changed in the secure world.
 			// After running the checkpoint in the secure world, the secure world checkpoints back
@@ -902,23 +695,23 @@ int main(int argc, char *argv[])
 			// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
 
-	// long shared_buffer_2_index = 0;
-	// struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
-	// shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+	long shared_buffer_2_index = 0;
+	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
-	// write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
+	write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
 
 	struct criu_pagemap_entries pagemap_entries;
 	TAILQ_INIT(&pagemap_entries);
 
-	// parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	// struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
-	// shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	// write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	// write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
+	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
 	// Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
