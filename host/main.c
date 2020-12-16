@@ -36,6 +36,10 @@
 #include <unistd.h>
 #include "jsmn.h"
 
+#include <sys/socket.h> 
+#include <arpa/inet.h> 
+#define PORT 50007 
+
 #define O_PATH		010000000
 
 
@@ -358,6 +362,53 @@ int main(int argc, char *argv[])
 	TEEC_Operation op;
 	TEEC_SharedMemory shared_memory_1, shared_memory_2;
 
+	int sock = 0, valread; 
+    struct sockaddr_in serv_addr; 
+    char buffer[1024] = {0}; 
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+    { 
+        printf("\n Socket creation error \n"); 
+        return -1; 
+    } 
+   
+    serv_addr.sin_family = AF_INET; 
+    serv_addr.sin_port = htons(PORT); 
+       
+    // Convert IPv4 and IPv6 addresses from text to binary form 
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)  
+    { 
+        printf("\nInvalid address/ Address not supported \n"); 
+        return -1; 
+    } 
+
+    char command[100];
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+    { 
+        printf("Connection to CRIT server failed.\n");
+        printf("Is it running?\n"); 
+        return -1; 
+    } 
+	snprintf(command, 100, "decode -i check/core-%s.img --pretty -o core-%s.txt", argv[1], argv[1]);
+    send(sock , command , strlen(command) , 0 ); 
+    // printf("CRIU decode message sent: %s\n", command); 
+    valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer ); 
+
+	snprintf(command, 100, "decode -i check/pagemap-%s.img --pretty -o pagemap-%s.txt", argv[1], argv[1]);
+    send(sock , command , strlen(command) , 0 ); 
+    // printf("CRIU decode message sent: %s\n", command); 
+    valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer ); 
+
+	snprintf(command, 100, "decode -i check/mm-%s.img --pretty -o mm-%s.txt", argv[1], argv[1]);
+    send(sock , command , strlen(command) , 0 ); 
+    // printf("CRIU decode message sent: %s\n", command); 
+    valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer ); 
+
 	// To hold the checkpoint file info
 	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
 	
@@ -580,6 +631,20 @@ int main(int argc, char *argv[])
 	TAILQ_FOREACH(entry, &pagemap_entries, link) {
 		free(entry);
 	}
+	
+	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%s.img", argv[1], argv[1]);
+    send(sock , command , strlen(command) , 0 ); 
+    // printf("CRIU encode message sent: %s\n", command); 
+    valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer ); 
+
+	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%s.img", argv[1], argv[1]);
+    send(sock , command , strlen(command) , 0 ); 
+    // printf("CRIU encode message sent: %s\n", command); 
+    valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer );
 
 	/*
 	 * We're done with the TA, close the session and
