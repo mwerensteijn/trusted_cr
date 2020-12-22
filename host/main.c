@@ -151,11 +151,8 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		// Write all updated registers
 		fputc('[', fpp);
 		for(int i = 0; i < 31; i++) {
-			if(checkpoint->regs[i])
-				fprintf(fpp, "\"%p\"", checkpoint->regs[i]);
-			else
-				fprintf(fpp, "\"0x0\"");
-
+			fprintf(fpp, "\"0x%lx\"", checkpoint->regs[i]);
+			
 			if(i != 30)
 				fprintf(fpp, ",\n");
 		}
@@ -163,15 +160,15 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
 
 		// Write updated stack pointer
-		fprintf(fpp, "%p", checkpoint->stack_addr);
+		fprintf(fpp, "0x%lx", checkpoint->stack_addr);
 		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
 
 		// Write updated program counter
-		fprintf(fpp, "%p", checkpoint->entry_addr);
+		fprintf(fpp, "0x%lx", checkpoint->entry_addr);
 		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
 		
 		// Write updated pstate
-		fprintf(fpp, "%p", checkpoint->pstate);
+		fprintf(fpp, "0x%lx", checkpoint->pstate);
 		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
 
 		// Write all updated vregs
@@ -318,7 +315,7 @@ void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagem
 
 
 		TAILQ_FOREACH(entry, pagemap_entries, link) {
-			fprintf(fpagemap, "{\n\t\"vaddr\": \"%p\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
+			fprintf(fpagemap, "{\n\t\"vaddr\": \"0x%lx\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
 			
 			bool require_seperator = false;
 			if(entry->entry.flags & PE_LAZY) {
