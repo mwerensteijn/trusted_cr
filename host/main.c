@@ -464,6 +464,54 @@ int main(int argc, char *argv[])
 	if(!parse_checkpoint_pagemap(&checkpoint, &checkpoint_files)) {
 		perror("Unable to parse pagemap-file.\n");
 	}
+
+	int shared_buffer_1_size = sizeof(struct criu_checkpoint) 
+								+ checkpoint.vm_area_count * sizeof(struct criu_vm_area)
+								+ checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	
+	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
+	// Allocate space for shared buffer 1
+	char * shared_buffer_1 = malloc(shared_buffer_1_size);
+	long   shared_buffer_1_index = 0;
+	if(shared_buffer_1 == NULL) {
+		printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
+		return -1;
+	}
+
+	printf("Loading checkpoint files into the buffer... ");
+
+	// Copy the checkpoint struct with the registers
+	int size = sizeof(struct criu_checkpoint);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, &checkpoint, size);
+	shared_buffer_1_index += size;
+	
+	// Copy over the vm areas
+	size = checkpoint.vm_area_count * sizeof(struct criu_vm_area);
+	memcpy(shared_buffer_1 + shared_buffer_1_size, checkpoint.vm_areas, size);
+	shared_buffer_1_index += size;
+
+	// Copy over the pagemap entries
+	size = checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	memcpy(shared_buffer_1 + shared_buffer_1_size, checkpoint.pagemap_entries, size);
+	shared_buffer_1_index += size;
+
+	printf("done!\n");
+
+	// Setup the structs that will go into shared buffer 2
+	struct checkpoint_file * binary_data = malloc(sizeof(struct checkpoint_file) * 2);
+	// Store the raw pagedata
+	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[PAGES_BINARY_FILE].buffer_index = checkpoint_files[PAGES_BINARY_FILE].file.buffer_index;
+	// Store the executable file
+	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
+	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = checkpoint_files[EXECUTABLE_BINARY_FILE].file.buffer_index;
+
+	
+
+
+
 	
 	// printf("Checkpoint:\n");
 	// for(int i = 0; i < checkpoint.vm_area_count; i++) {
@@ -481,36 +529,12 @@ int main(int argc, char *argv[])
 	// printf("pstate: %p\n", checkpoint.regs.pstate);
 
 
-// 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
 
-// 	// Allocate space for shared buffer 1
-// 	char * shared_buffer_1 = malloc(shared_buffer_1_size);
-// 	if(shared_buffer_1 == NULL) {
-// 		printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
-// 		return -1;
-// 	}
 
-// 	// printf("Loading checkpoint files into the buffer... ");
-// 	long shared_buffer_1_index = 0;
-// 	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-// 		// First copy the data from the checkpoint file buffer to shared buffer 1 at the correct index
-// 		memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint_files[i].buffer, checkpoint_files[i].file.file_size);
-// 		// Store the index so we can send that info later in shared buffer 2
-// 		checkpoint_files[i].file.buffer_index = shared_buffer_1_index;
-// 		// Will be overwritten by the next memcpy, except for the last entry
-// 		shared_buffer_1[shared_buffer_1_index + checkpoint_files[i].file.file_size] = 0;
 
-// 		shared_buffer_1_index += checkpoint_files[i].file.file_size;
-// 	}
-// 	// printf("done!\n");
 
-// 	// Setup the structs that will go into shared buffer 2
-// 	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
-// 	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-// 		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
-// 		checkpoint_files[i].file_size = files[i].file.file_size;
-// 		checkpoint_files[i].buffer_index = files[i].file.buffer_index;
-// 	}
+
+
 
 // 	/* Initialize a context connecting us to the TEE */
 // 	res = TEEC_InitializeContext(NULL, &ctx);
@@ -576,60 +600,60 @@ int main(int argc, char *argv[])
 	* called.
 	*/
 	// printf("\nLoading & executing checkpoint\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-			res, err_origin);
+	// res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
+	// 			&err_origin);
+	// if (res != TEEC_SUCCESS)
+	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+	// 		res, err_origin);
 
-	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
-	enum criu_return_types ret_type;
-	do {
-		ret_type = *return_type;
-		bool continue_execution = false;
-		long index = 0;
-		index += sizeof(enum criu_return_types);
-		struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
-		index += sizeof(struct criu_checkpoint_regs);
+	// enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
+	// enum criu_return_types ret_type;
+	// do {
+	// 	ret_type = *return_type;
+	// 	bool continue_execution = false;
+	// 	long index = 0;
+	// 	index += sizeof(enum criu_return_types);
+	// 	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
+	// 	index += sizeof(struct criu_checkpoint_regs);
 
-		// printf("TA returned from secure world: ");
-		switch(ret_type) {
-			case CRIU_SYSCALL_EXIT:
-				printf("EXIT system call!\n");
-				break;
-			case CRIU_SYSCALL_UNSUPPORTED:
-				printf("unsupported system call.\n");
-				break;
-			case CRIU_MIGRATE_BACK:
-				printf("Secure world wants to migrate back.\n");
-				break;
-			default:
-				printf("no idea what happened.\n");
-				break;
-		}
+	// 	// printf("TA returned from secure world: ");
+	// 	switch(ret_type) {
+	// 		case CRIU_SYSCALL_EXIT:
+	// 			printf("EXIT system call!\n");
+	// 			break;
+	// 		case CRIU_SYSCALL_UNSUPPORTED:
+	// 			printf("unsupported system call.\n");
+	// 			break;
+	// 		case CRIU_MIGRATE_BACK:
+	// 			printf("Secure world wants to migrate back.\n");
+	// 			break;
+	// 		default:
+	// 			printf("no idea what happened.\n");
+	// 			break;
+	// 	}
 
-		if(continue_execution) {
-			printf("\nContinuing execution\n");
-			res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-						&err_origin);
-			if (res != TEEC_SUCCESS) {
-				errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-					res, err_origin);
-				break;
-			}
-		} else {
-			break;
-		}
-	} while(ret_type != CRIU_SYSCALL_EXIT &&
-		    ret_type != CRIU_SYSCALL_UNSUPPORTED &&
-			ret_type != CRIU_MIGRATE_BACK);
+	// 	if(continue_execution) {
+	// 		printf("\nContinuing execution\n");
+	// 		res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+	// 					&err_origin);
+	// 		if (res != TEEC_SUCCESS) {
+	// 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+	// 				res, err_origin);
+	// 			break;
+	// 		}
+	// 	} else {
+	// 		break;
+	// 	}
+	// } while(ret_type != CRIU_SYSCALL_EXIT &&
+	// 	    ret_type != CRIU_SYSCALL_UNSUPPORTED &&
+	// 		ret_type != CRIU_MIGRATE_BACK);
 	
-	// printf("\nCheckpointing data back\n");
-	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
-				&err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-			res, err_origin);
+	// // printf("\nCheckpointing data back\n");
+	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
+	// 			&err_origin);
+	// if (res != TEEC_SUCCESS)
+	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+	// 		res, err_origin);
 	// printf("TA returned from secure world\n");
 
 			// As the memory buffers where shared, the data can be changed in the secure world.
