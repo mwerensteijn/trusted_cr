@@ -385,26 +385,38 @@ int main(int argc, char *argv[])
         printf("Is it running?\n"); 
         return -1; 
     } 
-	snprintf(command, 100, "decode -i check/core-%s.img --pretty -o core-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
+	
+	snprintf(command, 100, "decode -i check/core-%d.img --pretty -o core-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
 
-	snprintf(command, 100, "decode -i check/pagemap-%s.img --pretty -o pagemap-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
+	snprintf(command, 100, "decode -i check/pagemap-%d.img --pretty -o pagemap-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
 
-	snprintf(command, 100, "decode -i check/mm-%s.img --pretty -o mm-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
+	snprintf(command, 100, "decode -i check/mm-%d.img --pretty -o mm-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	return true;
+}
+
+int main(int argc, char *argv[])
+{
+	// printf("OP-TEE App Migrator\n\n");
+
+	if(argc < 3) {
+		printf("Usage: optee_app_migrator $pid $executable_name\n");
+		exit(-1);
+	}
+
+	TEEC_Result res;
+	TEEC_Context ctx;
+	TEEC_Session sess;
+	TEEC_Operation op;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+
+	int pid = strtoul(argv[1], NULL, 10);
+	if(!decode_checkpoint(pid)) {
+		perror("Unable to decode checkpoint\n");
+	}
 
 	// To hold the checkpoint file info
 	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
