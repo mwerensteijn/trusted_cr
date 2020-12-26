@@ -471,7 +471,7 @@ int main(int argc, char *argv[])
 	
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
 	// Allocate space for shared buffer 1
-	char * shared_buffer_1 = malloc(shared_buffer_1_size);
+	void * shared_buffer_1 = malloc(shared_buffer_1_size);
 	long   shared_buffer_1_index = 0;
 	if(shared_buffer_1 == NULL) {
 		printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
@@ -487,30 +487,60 @@ int main(int argc, char *argv[])
 	
 	// Copy over the vm areas
 	size = checkpoint.vm_area_count * sizeof(struct criu_vm_area);
-	memcpy(shared_buffer_1 + shared_buffer_1_size, checkpoint.vm_areas, size);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.vm_areas, size);
 	shared_buffer_1_index += size;
 
 	// Copy over the pagemap entries
 	size = checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
-	memcpy(shared_buffer_1 + shared_buffer_1_size, checkpoint.pagemap_entries, size);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.pagemap_entries, size);
 	shared_buffer_1_index += size;
 
 	printf("done!\n");
 
 	// Setup the structs that will go into shared buffer 2
-	struct checkpoint_file * binary_data = malloc(sizeof(struct checkpoint_file) * 2);
-	// Store the raw pagedata
-	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
-	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-	binary_data[PAGES_BINARY_FILE].buffer_index = checkpoint_files[PAGES_BINARY_FILE].file.buffer_index;
+	struct checkpoint_file * binary_data = malloc(2 * sizeof(struct checkpoint_file));
 	// Store the executable file
 	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
 	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
 	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = checkpoint_files[EXECUTABLE_BINARY_FILE].file.buffer_index;
-
+	// Store the raw pagedata
+	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[PAGES_BINARY_FILE].buffer_index = checkpoint_files[PAGES_BINARY_FILE].file.buffer_index;
 	
+	/* Initialize a context connecting us to the TEE */
+	res = TEEC_InitializeContext(NULL, &ctx);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
 
+	/*
+	 * Open a session to the TA
+	 */
+	res = TEEC_OpenSession(&ctx, &sess, &uuid,
+			       TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx",
+			res, err_origin);
 
+	// Setup shared memory buffer 1
+	shared_memory_1.size = shared_buffer_1_size;
+	shared_memory_1.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_1.buffer = shared_buffer_1;
+
+	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
+			res, err_origin);
+
+	// Setup shared memory buffer 2
+	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES_TO_TRANSFER;
+	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_2.buffer = checkpoint_files;
+
+	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
+			res, err_origin);
 
 	
 	// printf("Checkpoint:\n");
@@ -528,48 +558,6 @@ int main(int argc, char *argv[])
 	// printf("stack: %p\n", checkpoint.regs.stack_addr);
 	// printf("pstate: %p\n", checkpoint.regs.pstate);
 
-
-
-
-
-
-
-
-
-// 	/* Initialize a context connecting us to the TEE */
-// 	res = TEEC_InitializeContext(NULL, &ctx);
-// 	if (res != TEEC_SUCCESS)
-// 		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
-
-// 	/*
-// 	 * Open a session to the "hello world" TA, the TA will print "hello
-// 	 * world!" in the log when the session is created.
-// 	 */
-// 	res = TEEC_OpenSession(&ctx, &sess, &uuid,
-// 			       TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
-// 	if (res != TEEC_SUCCESS)
-// 		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx",
-// 			res, err_origin);
-
-// 	// Setup shared memory buffer 1
-// 	shared_memory_1.size = shared_buffer_1_size;
-// 	shared_memory_1.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-// 	shared_memory_1.buffer = shared_buffer_1;
-
-// 	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
-// 	if (res != TEEC_SUCCESS)
-// 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
-// 			res, err_origin);
-
-// 	// Setup shared memory buffer 2
-// 	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES_TO_TRANSFER;
-// 	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-// 	shared_memory_2.buffer = checkpoint_files;
-
-// 	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
-// 	if (res != TEEC_SUCCESS)
-// 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
-// 			res, err_origin);
 
 // 	/* Clear the TEEC_Operation struct */
 // 	memset(&op, 0, sizeof(op));
@@ -683,15 +671,14 @@ int main(int argc, char *argv[])
 	// write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
 	// // Give the memory back
-	// TEEC_ReleaseSharedMemory(&shared_memory_1);
-	// TEEC_ReleaseSharedMemory(&shared_memory_2);
+	TEEC_ReleaseSharedMemory(&shared_memory_1);
+	TEEC_ReleaseSharedMemory(&shared_memory_2);
 
-	// free(shared_buffer_1);
-	// free(checkpoint_files);
+	free(shared_buffer_1);
 
-	// for(int i = 0; i < CHECKPOINT_FILES; i++) {
-	// 	free(files[i].buffer);
-	// }
+	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		free(checkpoint_files[i].buffer);
+	}
 
 	// // Free all allocated criu_pagemap_entry structs
 	// struct criu_pagemap_entry_tracker * entry = NULL;
