@@ -59,309 +59,306 @@
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
-void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
-	FILE *fpp = fopen(new_filename, "w+");
-	if(fpp) {
-		// Initialize the JSMN json parser
-		jsmn_parser parser;
-		jsmn_init(&parser);
+// void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
+// 	FILE *fpp = fopen(new_filename, "w+");
+// 	if(fpp) {
+// 		// Initialize the JSMN json parser
+// 		jsmn_parser parser;
+// 		jsmn_init(&parser);
 
-		// First only determine the number of tokens.
-		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
+// 		// First only determine the number of tokens.
+// 		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
 
-		jsmntok_t tokens[items];
+// 		jsmntok_t tokens[items];
 		
-		// Reset position in stream
-		jsmn_init(&parser);
-		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
+// 		// Reset position in stream
+// 		jsmn_init(&parser);
+// 		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
 
-		// Invalid file.
-		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-			printf("CRIU: INVALID JSON\n");
-			return -1;
-		}
+// 		// Invalid file.
+// 		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+// 			printf("CRIU: INVALID JSON\n");
+// 			return -1;
+// 		}
 
-		// TLS indexes
-		int before_tls_value = 0;
-		int  after_tls_value = 0;
+// 		// TLS indexes
+// 		int before_tls_value = 0;
+// 		int  after_tls_value = 0;
 
-		// Regs indexes
-		int before_regs_value = 0;
-		int  after_regs_value = 0;
+// 		// Regs indexes
+// 		int before_regs_value = 0;
+// 		int  after_regs_value = 0;
 
-		// SP indexes
-		int before_sp_value = 0;
-		int  after_sp_value = 0;
+// 		// SP indexes
+// 		int before_sp_value = 0;
+// 		int  after_sp_value = 0;
 
-		// PC indexes
-		int before_pc_value = 0;
-		int  after_pc_value = 0;
+// 		// PC indexes
+// 		int before_pc_value = 0;
+// 		int  after_pc_value = 0;
 
-		// Pstate indexes
-		int before_pstate_value = 0;
-		int  after_pstate_value = 0;
+// 		// Pstate indexes
+// 		int before_pstate_value = 0;
+// 		int  after_pstate_value = 0;
 
-		// Vregs indexes
-		int before_vregs_value = 0;
-		int  after_vregs_value = 0;
+// 		// Vregs indexes
+// 		int before_vregs_value = 0;
+// 		int  after_vregs_value = 0;
 
-		// FPSR indexes
-		int before_fpsr_value = 0;
-		int  after_fpsr_value = 0;
+// 		// FPSR indexes
+// 		int before_fpsr_value = 0;
+// 		int  after_fpsr_value = 0;
 
-		// FPCR indexes
-		int before_fpcr_value = 0;
-		int  after_fpcr_value = 0;
+// 		// FPCR indexes
+// 		int before_fpcr_value = 0;
+// 		int  after_fpcr_value = 0;
 
-		// Parse the JSON version of the core checkpoint file (example core-2956.img)
-		for(int i = 1; i < items; i++) {
-			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
-				before_tls_value = tokens[i+1].start;
-				after_tls_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "regs") == 0) { 
-				before_regs_value = tokens[i+1].start;
-				after_regs_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "sp") == 0) {
-				before_sp_value = tokens[i+1].start;
-				after_sp_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
-				before_pc_value = tokens[i+1].start;
-				after_pc_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "pstate") == 0) {
-				before_pstate_value = tokens[i+1].start;
-				after_pstate_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
-				before_vregs_value = tokens[i+1].start;
-				after_vregs_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "fpsr") == 0) {
-				before_fpsr_value = tokens[i+1].start;
-				after_fpsr_value = tokens[i+1].end;
-			} else if (jsoneq(buffer, &tokens[i], "fpcr") == 0) {
-				before_fpcr_value = tokens[i+1].start;
-				after_fpcr_value = tokens[i+1].end;
-			}
-		}
+// 		// Parse the JSON version of the core checkpoint file (example core-2956.img)
+// 		for(int i = 1; i < items; i++) {
+// 			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
+// 				before_tls_value = tokens[i+1].start;
+// 				after_tls_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "regs") == 0) { 
+// 				before_regs_value = tokens[i+1].start;
+// 				after_regs_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "sp") == 0) {
+// 				before_sp_value = tokens[i+1].start;
+// 				after_sp_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
+// 				before_pc_value = tokens[i+1].start;
+// 				after_pc_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "pstate") == 0) {
+// 				before_pstate_value = tokens[i+1].start;
+// 				after_pstate_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
+// 				before_vregs_value = tokens[i+1].start;
+// 				after_vregs_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "fpsr") == 0) {
+// 				before_fpsr_value = tokens[i+1].start;
+// 				after_fpsr_value = tokens[i+1].end;
+// 			} else if (jsoneq(buffer, &tokens[i], "fpcr") == 0) {
+// 				before_fpcr_value = tokens[i+1].start;
+// 				after_fpcr_value = tokens[i+1].end;
+// 			}
+// 		}
 
-		fprintf_substring(fpp, buffer, 0, before_tls_value);
+// 		fprintf_substring(fpp, buffer, 0, before_tls_value);
 
-		// Write tpidr_el0
-		fprintf(fpp, "%llu", checkpoint->tpidr_el0_addr); 
-		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
+// 		// Write tpidr_el0
+// 		fprintf(fpp, "%llu", checkpoint->tpidr_el0_addr); 
+// 		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
 
-		// Write all updated registers
-		fputc('[', fpp);
-		for(int i = 0; i < 31; i++) {
-			fprintf(fpp, "\"0x%lx\"", checkpoint->regs[i]);
+// 		// Write all updated registers
+// 		fputc('[', fpp);
+// 		for(int i = 0; i < 31; i++) {
+// 			fprintf(fpp, "\"0x%lx\"", checkpoint->regs[i]);
 			
-			if(i != 30)
-				fprintf(fpp, ",\n");
-		}
-		fputc(']', fpp);
-		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
+// 			if(i != 30)
+// 				fprintf(fpp, ",\n");
+// 		}
+// 		fputc(']', fpp);
+// 		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
 
-		// Write updated stack pointer
-		fprintf(fpp, "0x%lx", checkpoint->stack_addr);
-		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
+// 		// Write updated stack pointer
+// 		fprintf(fpp, "0x%lx", checkpoint->stack_addr);
+// 		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
 
-		// Write updated program counter
-		fprintf(fpp, "0x%lx", checkpoint->entry_addr);
-		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
+// 		// Write updated program counter
+// 		fprintf(fpp, "0x%lx", checkpoint->entry_addr);
+// 		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
 		
-		// Write updated pstate
-		fprintf(fpp, "0x%lx", checkpoint->pstate);
-		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
+// 		// Write updated pstate
+// 		fprintf(fpp, "0x%lx", checkpoint->pstate);
+// 		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
 
-		// Write all updated vregs
-		fputc('[', fpp);
-		for(int i = 0; i < 64; i++) {
-			fprintf(fpp, "%llu", checkpoint->vregs[i]);
+// 		// Write all updated vregs
+// 		fputc('[', fpp);
+// 		for(int i = 0; i < 64; i++) {
+// 			fprintf(fpp, "%llu", checkpoint->vregs[i]);
 
-			if(i != 63)
-				fprintf(fpp, ",\n");
-		}
-		fputc(']', fpp);
-		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
+// 			if(i != 63)
+// 				fprintf(fpp, ",\n");
+// 		}
+// 		fputc(']', fpp);
+// 		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
 
-		// Write updated fpsr
-		fprintf(fpp, "%lu", checkpoint->fpsr);
-		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
+// 		// Write updated fpsr
+// 		fprintf(fpp, "%lu", checkpoint->fpsr);
+// 		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
 		
-		// Write updated fpcr
-		fprintf(fpp, "%lu", checkpoint->fpcr);
-		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
+// 		// Write updated fpcr
+// 		fprintf(fpp, "%lu", checkpoint->fpcr);
+// 		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
 
-		fclose(fpp);
-	}
-}
+// 		fclose(fpp);
+// 	}
+// }
 
-void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
-									struct criu_checkpoint_dirty_pages * dirty_pages_info,
-									long * shared_buffer_2_index, char * original_buffer) {
-	FILE *fpages = fopen("modified_pages-1.img", "w+");
-	if(fpages) {
-		struct criu_pagemap_entry_tracker * entry = NULL;
-		struct criu_pagemap_entry * pagemap_entry = NULL;
-		TAILQ_FOREACH(entry, pagemap_entries, link) {
-			for(int i = 0; i < entry->entry.nr_pages; i++) {
-				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
+// void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
+// 									struct criu_checkpoint_dirty_pages * dirty_pages_info,
+// 									long * shared_buffer_2_index, char * original_buffer) {
+// 	FILE *fpages = fopen("modified_pages-1.img", "w+");
+// 	if(fpages) {
+// 		struct criu_pagemap_entry_tracker * entry = NULL;
+// 		struct criu_pagemap_entry * pagemap_entry = NULL;
+// 		TAILQ_FOREACH(entry, pagemap_entries, link) {
+// 			for(int i = 0; i < entry->entry.nr_pages; i++) {
+// 				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
 
-				bool dirty_page = false;
-				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-					pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+// 				bool dirty_page = false;
+// 				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+// 					pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
 					
-					if(addr == pagemap_entry->vaddr_start) {
-						// Write dirty page
-						fwrite(parameter_buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
-						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-						dirty_page = true;
-						break;
-					}
-				}
+// 					if(addr == pagemap_entry->vaddr_start) {
+// 						// Write dirty page
+// 						fwrite(parameter_buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
+// 						// printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+// 						dirty_page = true;
+// 						break;
+// 					}
+// 				}
 
-				if(!dirty_page) {
-					// Write the original
-					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
-					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-				}
-			}
-		}
+// 				if(!dirty_page) {
+// 					// Write the original
+// 					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
+// 					// printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+// 				}
+// 			}
+// 		}
 
-		fclose(fpages);
-	} else {
-		printf("Unable to open pages-1.img for writing..");
-	}
-}
+// 		fclose(fpages);
+// 	} else {
+// 		printf("Unable to open pages-1.img for writing..");
+// 	}
+// }
 
-void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
-									struct criu_checkpoint_dirty_pages * dirty_pages_info,
-									long * shared_buffer_2_index, char * buffer, long file_size) {
-	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
+// void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
+// 									struct criu_checkpoint_dirty_pages * dirty_pages_info,
+// 									long * shared_buffer_2_index, char * buffer, long file_size) {
+// 	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
 
-	if(fpagemap) {
-		// Initialize the JSMN json parser
-		jsmn_parser parser;
-		jsmn_init(&parser);
+// 	if(fpagemap) {
+// 		// Initialize the JSMN json parser
+// 		jsmn_parser parser;
+// 		jsmn_init(&parser);
 
-		// First only determine the number of tokens.
-		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
+// 		// First only determine the number of tokens.
+// 		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
 
-		jsmntok_t tokens[items];
+// 		jsmntok_t tokens[items];
 		
-		// Reset position in stream
-		jsmn_init(&parser);
-		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
+// 		// Reset position in stream
+// 		jsmn_init(&parser);
+// 		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
 
-		// Invalid file.
-		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-			printf("CRIU: INVALID JSON\n");
-			return -1;
-		}
+// 		// Invalid file.
+// 		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+// 			printf("CRIU: INVALID JSON\n");
+// 			return -1;
+// 		}
 
-		// First vaddr index
-		int vaddr_start = 0;
+// 		// First vaddr index
+// 		int vaddr_start = 0;
 
-		// Parse the JSON version of the core checkpoint file (example core-2956.img)
-		for(int i = 1; i < items; i++) {
-			if (jsoneq(buffer, &tokens[i], "vaddr") == 0) { 
-				vaddr_start = tokens[i-1].start;
-				break;
-			}
-		}
+// 		// Parse the JSON version of the core checkpoint file (example core-2956.img)
+// 		for(int i = 1; i < items; i++) {
+// 			if (jsoneq(buffer, &tokens[i], "vaddr") == 0) { 
+// 				vaddr_start = tokens[i-1].start;
+// 				break;
+// 			}
+// 		}
 
-		char backup = buffer[vaddr_start];
-		buffer[vaddr_start] = 0;
-		fprintf(fpagemap, "%s", buffer);
-		buffer[vaddr_start] = backup;	
-		struct criu_pagemap_entry_tracker * entry = NULL;
+// 		char backup = buffer[vaddr_start];
+// 		buffer[vaddr_start] = 0;
+// 		fprintf(fpagemap, "%s", buffer);
+// 		buffer[vaddr_start] = backup;	
+// 		struct criu_pagemap_entry_tracker * entry = NULL;
 
-		// FILE *fp = fopen("pages-1.new.img", "w+");
-		// // FILE *f  = fopen("pages-1.img", "rb");
+// 		// FILE *fp = fopen("pages-1.new.img", "w+");
+// 		// // FILE *f  = fopen("pages-1.img", "rb");
 
-		printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-		struct criu_pagemap_entry * pagemap_entry = NULL;
+// 		// printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
+// 		struct criu_pagemap_entry * pagemap_entry = NULL;
 
 
 
-		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-			pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-			bool skip = false;
-			bool insert_before = false;
-			TAILQ_FOREACH(entry, pagemap_entries, link) {
-				if((entry->entry.vaddr_start <= pagemap_entry->vaddr_start)  &&
-				(pagemap_entry->vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
-					skip = true;
-					break;
-				} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
-					insert_before = true;
-					break;
-				}
-			}		
+// 		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
+// 			pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
+// 			bool skip = false;
+// 			bool insert_before = false;
+// 			TAILQ_FOREACH(entry, pagemap_entries, link) {
+// 				if((entry->entry.vaddr_start <= pagemap_entry->vaddr_start)  &&
+// 				(pagemap_entry->vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
+// 					skip = true;
+// 					break;
+// 				} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
+// 					insert_before = true;
+// 					break;
+// 				}
+// 			}		
 
-			if(skip)
-				continue;
+// 			if(skip)
+// 				continue;
 
-			struct criu_pagemap_entry_tracker * new_entry = calloc(1, sizeof(struct criu_pagemap_entry_tracker));
+// 			struct criu_pagemap_entry_tracker * new_entry = calloc(1, sizeof(struct criu_pagemap_entry_tracker));
 			
-			new_entry->entry.vaddr_start = pagemap_entry->vaddr_start;
-			new_entry->entry.nr_pages = pagemap_entry->nr_pages;
-			new_entry->entry.file_page_index = pagemap_entry->file_page_index;
-			new_entry->entry.flags = PE_LAZY | PE_PRESENT;
+// 			new_entry->entry.vaddr_start = pagemap_entry->vaddr_start;
+// 			new_entry->entry.nr_pages = pagemap_entry->nr_pages;
+// 			new_entry->entry.file_page_index = pagemap_entry->file_page_index;
+// 			new_entry->entry.flags = PE_LAZY | PE_PRESENT;
 
-			if(insert_before)
-				TAILQ_INSERT_BEFORE(entry, new_entry, link);
-			else
-				TAILQ_INSERT_TAIL(pagemap_entries, new_entry, link);
-		}
+// 			if(insert_before)
+// 				TAILQ_INSERT_BEFORE(entry, new_entry, link);
+// 			else
+// 				TAILQ_INSERT_TAIL(pagemap_entries, new_entry, link);
+// 		}
 
 
-		TAILQ_FOREACH(entry, pagemap_entries, link) {
-			fprintf(fpagemap, "{\n\t\"vaddr\": \"0x%lx\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
+// 		TAILQ_FOREACH(entry, pagemap_entries, link) {
+// 			fprintf(fpagemap, "{\n\t\"vaddr\": \"0x%lx\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
 			
-			bool require_seperator = false;
-			if(entry->entry.flags & PE_LAZY) {
-				fprintf(fpagemap, "PE_LAZY");
-				require_seperator = true;
-			}
+// 			bool require_seperator = false;
+// 			if(entry->entry.flags & PE_LAZY) {
+// 				fprintf(fpagemap, "PE_LAZY");
+// 				require_seperator = true;
+// 			}
 
-			if(entry->entry.flags & PE_PRESENT) {
-				if(require_seperator)
-					fprintf(fpagemap, " | ");
+// 			if(entry->entry.flags & PE_PRESENT) {
+// 				if(require_seperator)
+// 					fprintf(fpagemap, " | ");
 
-				fprintf(fpagemap, "PE_PRESENT");
-			}
+// 				fprintf(fpagemap, "PE_PRESENT");
+// 			}
 
-			fprintf(fpagemap, "\"\n}");
+// 			fprintf(fpagemap, "\"\n}");
 
-			if(entry->link.tqe_next != NULL)
-				fprintf(fpagemap, ",\n");
-		}
+// 			if(entry->link.tqe_next != NULL)
+// 				fprintf(fpagemap, ",\n");
+// 		}
 
-		fprintf(fpagemap, "] }");
+// 		fprintf(fpagemap, "] }");
 
-		fclose(fpagemap);
-	} else {
-		printf("Unable to open modified_pagemap.txt");
-	}
+// 		fclose(fpagemap);
+// 	} else {
+// 		printf("Unable to open modified_pagemap.txt");
+// 	}
+// }
+
+int crit_execute(int sock, char * command, char * buffer) {
+    send(sock, command , strlen(command) , 0 ); 
+    printf("CRIU decode message sent: %s\n", command); 
+    int valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    printf("%s\n",buffer ); 
+	return valread;
 }
 
-int main(int argc, char *argv[])
-{
-	printf("OP-TEE App Migrator\n\n");
-
-	if(argc < 3) {
-		printf("Usage: optee_app_migrator $pid $executable_name\n");
-		exit(-1);
-	}
-
-	TEEC_Result res;
-	TEEC_Context ctx;
-	TEEC_Session sess;
-	TEEC_Operation op;
-	TEEC_SharedMemory shared_memory_1, shared_memory_2;
-
-	int sock = 0, valread; 
+bool decode_checkpoint(int pid) {
+	int sock = 0; 
     struct sockaddr_in serv_addr; 
     char buffer[1024] = {0}; 
+	char command[100];
+
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
     { 
         printf("\n Socket creation error \n"); 
@@ -378,7 +375,6 @@ int main(int argc, char *argv[])
         return -1; 
     } 
 
-    char command[100];
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
     { 
         printf("Connection to CRIT server failed.\n");
@@ -398,45 +394,19 @@ int main(int argc, char *argv[])
 	return true;
 }
 
-int main(int argc, char *argv[])
-{
-	// printf("OP-TEE App Migrator\n\n");
+int read_checkpoint_files(int pid, char * executable_name, struct checkpoint_file_data * files) {
+	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
 
-	if(argc < 3) {
-		printf("Usage: optee_app_migrator $pid $executable_name\n");
-		exit(-1);
-	}
-
-	TEEC_Result res;
-	TEEC_Context ctx;
-	TEEC_Session sess;
-	TEEC_Operation op;
-	TEEC_SharedMemory shared_memory_1, shared_memory_2;
-
-	int pid = strtoul(argv[1], NULL, 10);
-	if(!decode_checkpoint(pid)) {
-		perror("Unable to decode checkpoint\n");
-	}
-
-	// To hold the checkpoint file info
-	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
-	
-	TEEC_UUID uuid = PTA_CRIU_UUID;
-	uint32_t err_origin;
-
-	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
-	};
-
-	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%s.txt", argv[1]);
-	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%s.txt", argv[1]);
-	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%s.txt", argv[1]);
-	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img", argv[1]);
-	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", argv[2]);
+	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%d.txt", pid);
+	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%d.txt", pid);
+	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%d.txt", pid);
+	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img");
+	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", executable_name);
 	
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		printf("%d: %s\n", i, filenames[i]);
+		// printf("%d: %s\n", i, filenames[i]);
 
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
@@ -446,6 +416,37 @@ int main(int argc, char *argv[])
 		if (i < CHECKPOINT_FILES_TO_TRANSFER)
 			shared_buffer_1_size += files[i].file.file_size;
 	}
+
+	return shared_buffer_1_size;
+}
+
+int main(int argc, char *argv[])
+{
+	// printf("OP-TEE App Migrator\n\n");
+
+	if(argc < 3) {
+		printf("Usage: optee_app_migrator $pid $executable_name\n");
+		exit(-1);
+	}
+
+	int pid = strtoul(argv[1], NULL, 10);
+	char * executable_name = argv[2];
+
+	TEEC_Result res;
+	TEEC_Context ctx;
+	TEEC_Session sess;
+	TEEC_Operation op;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+	TEEC_UUID uuid = PTA_CRIU_UUID;
+	uint32_t err_origin;
+
+	if(!decode_checkpoint(pid)) {
+		perror("Unable to decode checkpoint\n");
+	}
+
+	// To hold the checkpoint file info
+	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
+	int shared_buffer_1_size = read_checkpoint_files(pid, executable_name, files);
 
 	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
 
@@ -606,62 +607,62 @@ int main(int argc, char *argv[])
 			// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
 
-	long shared_buffer_2_index = 0;
-	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+	// long shared_buffer_2_index = 0;
+	// struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+	// shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
-	write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
+	// write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
 
-	struct criu_pagemap_entries pagemap_entries;
-	TAILQ_INIT(&pagemap_entries);
+	// struct criu_checkpoint c;
+	// TAILQ_INIT(&c.dirty_pagemap);
 
-	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	// parse_checkpoint_pagemap(&c, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 
-	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+	// struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
+	// shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
+	// write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
 	
-	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
+	// write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
 
-	// Give the memory back
-	TEEC_ReleaseSharedMemory(&shared_memory_1);
-	TEEC_ReleaseSharedMemory(&shared_memory_2);
+	// // Give the memory back
+	// TEEC_ReleaseSharedMemory(&shared_memory_1);
+	// TEEC_ReleaseSharedMemory(&shared_memory_2);
 
-	free(shared_buffer_1);
-	free(checkpoint_files);
+	// free(shared_buffer_1);
+	// free(checkpoint_files);
 
-	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		free(files[i].buffer);
-	}
+	// for(int i = 0; i < CHECKPOINT_FILES; i++) {
+	// 	free(files[i].buffer);
+	// }
 
-	// Free all allocated criu_pagemap_entry structs
-	struct criu_pagemap_entry_tracker * entry = NULL;
-	TAILQ_FOREACH(entry, &pagemap_entries, link) {
-		free(entry);
-	}
+	// // Free all allocated criu_pagemap_entry structs
+	// struct criu_pagemap_entry_tracker * entry = NULL;
+	// TAILQ_FOREACH(entry, &pagemap_entries, link) {
+	// 	free(entry);
+	// }
 	
-	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%s.img", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU encode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
+	// snprintf(command, 100, "encode -i modified_core.txt -o check/core-%s.img", argv[1], argv[1]);
+    // send(sock , command , strlen(command) , 0 ); 
+    // // printf("CRIU encode message sent: %s\n", command); 
+    // valread = read( sock , buffer, 1024); 
+	// buffer[valread] = '\0';
+    // // printf("%s\n",buffer ); 
 
-	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%s.img", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU encode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer );
+	// snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%s.img", argv[1], argv[1]);
+    // send(sock , command , strlen(command) , 0 ); 
+    // // printf("CRIU encode message sent: %s\n", command); 
+    // valread = read( sock , buffer, 1024); 
+	// buffer[valread] = '\0';
+    // // printf("%s\n",buffer );
 
-	/*
-	 * We're done with the TA, close the session and
-	 * destroy the context.
-	 *
-	 * The TA will print "Goodbye!" in the log when the
-	 * session is closed.
-	 */
+	// /*
+	//  * We're done with the TA, close the session and
+	//  * destroy the context.
+	//  *
+	//  * The TA will print "Goodbye!" in the log when the
+	//  * session is closed.
+	//  */
 	TEEC_CloseSession(&sess);
 	TEEC_FinalizeContext(&ctx);
 
