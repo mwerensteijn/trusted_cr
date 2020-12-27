@@ -39,8 +39,6 @@
 #include <sys/socket.h> 
 #include <arpa/inet.h> 
 
-#include "criu/criu.h"
-
 #define PORT 50007
 
 #define O_PATH		010000000
