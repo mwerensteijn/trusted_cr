@@ -449,7 +449,8 @@ int main(int argc, char *argv[])
 
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
-	int shared_buffer_1_size = read_checkpoint_files(pid, executable_name, checkpoint_files);
+	// TODO: make it a if(true) otherwise exit
+	read_checkpoint_files(pid, executable_name, checkpoint_files);
 
 	struct criu_checkpoint checkpoint;
 
@@ -498,15 +499,35 @@ int main(int argc, char *argv[])
 	printf("done!\n");
 
 	// Setup the structs that will go into shared buffer 2
-	struct checkpoint_file * binary_data = malloc(2 * sizeof(struct checkpoint_file));
-	// Store the executable file
+	long shared_buffer_2_size = 2 * sizeof(struct checkpoint_file) 
+									+ checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size
+									+ checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	void * shared_buffer_2 = malloc(shared_buffer_2_size);
+	int shared_buffer_2_index = 0;
+	
+	struct checkpoint_file * binary_data = shared_buffer_2;
+	// Store the executable file descriptor
 	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
 	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
-	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = checkpoint_files[EXECUTABLE_BINARY_FILE].file.buffer_index;
-	// Store the raw pagedata
+	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
+	// Store the pagedata descriptor
 	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
 	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-	binary_data[PAGES_BINARY_FILE].buffer_index = checkpoint_files[PAGES_BINARY_FILE].file.buffer_index;
+	binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
+												+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
+
+	// Store the executable
+	size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+	// Store the pagedata
+	size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+
+	
 	
 	/* Initialize a context connecting us to the TEE */
 	res = TEEC_InitializeContext(NULL, &ctx);
@@ -533,15 +554,31 @@ int main(int argc, char *argv[])
 			res, err_origin);
 
 	// Setup shared memory buffer 2
-	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES_TO_TRANSFER;
+	shared_memory_2.size = shared_buffer_2_size;
 	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-	shared_memory_2.buffer = checkpoint_files;
+	shared_memory_2.buffer = shared_buffer_2;
 
 	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
 	if (res != TEEC_SUCCESS)
 		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
+	/* Clear the TEEC_Operation struct */
+	memset(&op, 0, sizeof(op));
+
+	/*
+	* Prepare the two arguments that will be passed to the secure world, which are two shared memory buffers.
+	*/
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
+				TEEC_NONE, TEEC_NONE);
+
+	op.params[0].memref.parent = &shared_memory_1;
+	op.params[0].memref.size = shared_memory_1.size;
+	op.params[0].memref.offset = 0;
+
+	op.params[1].memref.parent = &shared_memory_2;
+	op.params[1].memref.size = shared_memory_2.size;
+	op.params[1].memref.offset = 0;
 	
 	// printf("Checkpoint:\n");
 	// for(int i = 0; i < checkpoint.vm_area_count; i++) {
@@ -559,40 +596,16 @@ int main(int argc, char *argv[])
 	// printf("pstate: %p\n", checkpoint.regs.pstate);
 
 
-// 	/* Clear the TEEC_Operation struct */
-// 	memset(&op, 0, sizeof(op));
-
-// 	/*
-// 	* Prepare the two arguments that will be passed to the secure world, which are two shared memory buffers.
-// 	*/
-// 	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
-// 				TEEC_NONE, TEEC_NONE);
-
-// 	op.params[0].memref.parent = &shared_memory_1;
-// 	op.params[0].memref.size = shared_memory_1.size;
-// 	op.params[0].memref.offset = 0;
-
-// 	op.params[1].memref.parent = &shared_memory_2;
-// 	op.params[1].memref.size = shared_memory_2.size;
-// 	op.params[1].memref.offset = 0;
-
-// #ifdef DEBUG
-// 	struct checkpoint_file * checkpoint_file_var = checkpoint_files;
-// 	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-// 		printf("checkpoint file: type %lu - index %lu\t- size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
-// 	}
-// #endif
-
 	/*
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
 	*/
-	// printf("\nLoading & executing checkpoint\n");
-	// res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
-	// 			&err_origin);
-	// if (res != TEEC_SUCCESS)
-	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-	// 		res, err_origin);
+	printf("\nLoading & executing checkpoint\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+			res, err_origin);
 
 	// enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
 	// enum criu_return_types ret_type;
