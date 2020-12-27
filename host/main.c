@@ -578,22 +578,6 @@ int main(int argc, char *argv[])
 	op.params[1].memref.size = shared_memory_2.size;
 	op.params[1].memref.offset = 0;
 	
-	// printf("Checkpoint:\n");
-	// for(int i = 0; i < checkpoint.vm_area_count; i++) {
-	// 	printf("vm_area[%d]: %p-%p\n", i, checkpoint.vm_areas[i].vm_start, checkpoint.vm_areas[i].vm_end);
-	// }
-
-	// printf("----------:\n");
-	// for(int i = 0; i < checkpoint.pagemap_entry_count; i++) {
-	// 	printf("vm_area[%d]: %p - %d pages\n", i, checkpoint.pagemap_entries[i].vaddr_start, checkpoint.pagemap_entries[i].nr_pages);
-	// }
-
-	// printf("----------:\n");
-	// printf("start: %p\n", checkpoint.regs.entry_addr);
-	// printf("stack: %p\n", checkpoint.regs.stack_addr);
-	// printf("pstate: %p\n", checkpoint.regs.pstate);
-
-
 	/*
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
@@ -605,55 +589,51 @@ int main(int argc, char *argv[])
 		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
-	// enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
-	// enum criu_return_types ret_type;
-	// do {
-	// 	ret_type = *return_type;
-	// 	bool continue_execution = false;
-	// 	long index = 0;
-	// 	index += sizeof(enum criu_return_types);
-	// 	struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
-	// 	index += sizeof(struct criu_checkpoint_regs);
+	do {
+		bool continue_execution = false;
+		
+		checkpoint.result = (enum criu_return_types) op.params[1].memref.parent->buffer;
+		memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	criu_return_types), sizeof(struct criu_checkpoint_regs));
 
-	// 	// printf("TA returned from secure world: ");
-	// 	switch(ret_type) {
-	// 		case CRIU_SYSCALL_EXIT:
-	// 			printf("EXIT system call!\n");
-	// 			break;
-	// 		case CRIU_SYSCALL_UNSUPPORTED:
-	// 			printf("unsupported system call.\n");
-	// 			break;
-	// 		case CRIU_MIGRATE_BACK:
-	// 			printf("Secure world wants to migrate back.\n");
-	// 			break;
-	// 		default:
-	// 			printf("no idea what happened.\n");
-	// 			break;
-	// 	}
+		printf("TA returned from secure world: ");
+		switch(checkpoint.result) {
+			case CRIU_SYSCALL_EXIT:
+				printf("EXIT system call!\n");
+				break;
+			case CRIU_SYSCALL_UNSUPPORTED:
+				printf("unsupported system call.\n");
+				break;
+			case CRIU_MIGRATE_BACK:
+				printf("Secure world wants to migrate back.\n");
+				break;
+			default:
+				printf("no idea what happened.\n");
+				break;
+		}
 
-	// 	if(continue_execution) {
-	// 		printf("\nContinuing execution\n");
-	// 		res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-	// 					&err_origin);
-	// 		if (res != TEEC_SUCCESS) {
-	// 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-	// 				res, err_origin);
-	// 			break;
-	// 		}
-	// 	} else {
-	// 		break;
-	// 	}
-	// } while(ret_type != CRIU_SYSCALL_EXIT &&
-	// 	    ret_type != CRIU_SYSCALL_UNSUPPORTED &&
-	// 		ret_type != CRIU_MIGRATE_BACK);
+		if(continue_execution) {
+			printf("\nContinuing execution\n");
+			res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
+						&err_origin);
+			if (res != TEEC_SUCCESS) {
+				errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+					res, err_origin);
+				break;
+			}
+		} else {
+			break;
+		}
+	} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
+		    checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
+			checkpoint.result != CRIU_MIGRATE_BACK);
 	
-	// // printf("\nCheckpointing data back\n");
-	// res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
-	// 			&err_origin);
-	// if (res != TEEC_SUCCESS)
-	// 	errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-	// 		res, err_origin);
-	// printf("TA returned from secure world\n");
+	printf("\nCheckpointing data back\n");
+	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
+				&err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
+			res, err_origin);
+	printf("TA returned from secure world\n");
 
 			// As the memory buffers where shared, the data can be changed in the secure world.
 			// After running the checkpoint in the secure world, the secure world checkpoints back
@@ -663,9 +643,11 @@ int main(int argc, char *argv[])
 			// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
 
-	// long shared_buffer_2_index = 0;
-	// struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
-	// shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+	shared_buffer_2_index = 0;
+	struct criu_checkpoint_regs * checkpoint_back = op.params[1].memref.parent->buffer;
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+
+	printf("Got data back: %p - %p\n", checkpoint_back->entry_addr, checkpoint_back->pstate);
 
 	// write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
 
