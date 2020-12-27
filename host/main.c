@@ -522,7 +522,7 @@ int main(int argc, char *argv[])
 	shared_buffer_2_index += size;
 	// Store the pagedata
 	size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
+	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer, size);
 	shared_buffer_2_index += size;
 
 	
