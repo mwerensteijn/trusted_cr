@@ -195,43 +195,38 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 	}
 }
 
-// void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
-// 									struct criu_checkpoint_dirty_pages * dirty_pages_info,
-// 									long * shared_buffer_2_index, char * original_buffer) {
-// 	FILE *fpages = fopen("modified_pages-1.img", "w+");
-// 	if(fpages) {
-// 		struct criu_pagemap_entry_tracker * entry = NULL;
-// 		struct criu_pagemap_entry * pagemap_entry = NULL;
-// 		TAILQ_FOREACH(entry, pagemap_entries, link) {
-// 			for(int i = 0; i < entry->entry.nr_pages; i++) {
-// 				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
+void write_updated_pages_checkpoint(struct criu_merged_pagemap * merged_map, struct criu_dirty_page * dirty_page, int dirty_page_count, void * page_data, char * original_buffer) {
+	FILE *fpages = fopen("modified_pages-1.img", "w+");
+	if(fpages) {
+		struct criu_merged_page * entry = NULL;
+		TAILQ_FOREACH(entry, merged_map, link) {
+			for(int i = 0; i < entry->entry.nr_pages; i++) {
+				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
+	
+				bool dirty = false;
+				for(int y = 0; y < dirty_page_count; y++) {
+					if(addr == dirty_page[y].vaddr_start) {
+						// Write dirty page
+						fwrite(page_data + y * 4096, 1, 4096, fpages);
+						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+						dirty = true;
+						break;
+					}
+				}
 
-// 				bool dirty_page = false;
-// 				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-// 					pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-					
-// 					if(addr == pagemap_entry->vaddr_start) {
-// 						// Write dirty page
-// 						fwrite(parameter_buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
-// 						// printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-// 						dirty_page = true;
-// 						break;
-// 					}
-// 				}
+				if(!dirty) {
+					// Write the original
+					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
+					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+				}
+			}
+		}
 
-// 				if(!dirty_page) {
-// 					// Write the original
-// 					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
-// 					// printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-// 				}
-// 			}
-// 		}
-
-// 		fclose(fpages);
-// 	} else {
-// 		printf("Unable to open pages-1.img for writing..");
-// 	}
-// }
+		fclose(fpages);
+	} else {
+		printf("Unable to open pages-1.img for writing..");
+	}
+}
 
 void write_updated_pagemap_checkpoint(struct criu_merged_pagemap * merged_pagemap, char * buffer, long file_size) {
 	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
@@ -349,6 +344,48 @@ bool decode_checkpoint(int pid) {
 
 	snprintf(command, 100, "decode -i check/mm-%d.img --pretty -o mm-%d.txt", pid, pid);
 	crit_execute(sock, command, buffer);
+
+	close(sock);
+
+	return true;
+}
+
+bool encode_checkpoint(int pid) {
+	int sock = 0; 
+    struct sockaddr_in serv_addr; 
+    char buffer[1024] = {0}; 
+	char command[100];
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+    { 
+        printf("\n Socket creation error \n"); 
+        return -1; 
+    } 
+   
+    serv_addr.sin_family = AF_INET; 
+    serv_addr.sin_port = htons(PORT); 
+       
+    // Convert IPv4 and IPv6 addresses from text to binary form 
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)  
+    { 
+        printf("\nInvalid address/ Address not supported \n"); 
+        return -1; 
+    } 
+
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+    { 
+        printf("Connection to CRIT server failed.\n");
+        printf("Is it running?\n"); 
+        return -1; 
+    } 
+
+	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%d.img", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%d.img", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	close(sock);
 
 	return true;
 }
@@ -613,7 +650,7 @@ int main(int argc, char *argv[])
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
 	struct criu_dirty_page * dirty_entry = op.params[1].memref.parent->buffer + shared_buffer_2_index;
-	shared_buffer_2_index += dirty_pages_info->offset;
+	shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct criu_dirty_page);
 
 	struct criu_merged_pagemap merged_map;
 	TAILQ_INIT(&merged_map);
@@ -629,8 +666,9 @@ int main(int argc, char *argv[])
 
 
 	write_updated_pagemap_checkpoint(&merged_map, checkpoint_files[PAGEMAP_FILE].buffer, checkpoint_files[PAGEMAP_FILE].file.file_size);
-	
-	// write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
+
+	write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, op.params[1].memref.parent->buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
+
 
 	// // Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
@@ -642,25 +680,13 @@ int main(int argc, char *argv[])
 		free(checkpoint_files[i].buffer);
 	}
 
-	// // Free all allocated criu_pagemap_entry structs
-	// struct criu_pagemap_entry_tracker * entry = NULL;
-	// TAILQ_FOREACH(entry, &pagemap_entries, link) {
-	// 	free(entry);
-	// }
+	// Free all allocated criu_pagemap_entry structs
+	struct criu_merged_page * entry = NULL;
+	TAILQ_FOREACH(entry, &merged_map, link) {
+		free(entry);
+	}
 	
-	// snprintf(command, 100, "encode -i modified_core.txt -o check/core-%s.img", argv[1], argv[1]);
-    // send(sock , command , strlen(command) , 0 ); 
-    // // printf("CRIU encode message sent: %s\n", command); 
-    // valread = read( sock , buffer, 1024); 
-	// buffer[valread] = '\0';
-    // // printf("%s\n",buffer ); 
-
-	// snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%s.img", argv[1], argv[1]);
-    // send(sock , command , strlen(command) , 0 ); 
-    // // printf("CRIU encode message sent: %s\n", command); 
-    // valread = read( sock , buffer, 1024); 
-	// buffer[valread] = '\0';
-    // // printf("%s\n",buffer );
+	encode_checkpoint(pid);
 
 	// /*
 	//  * We're done with the TA, close the session and
