@@ -60,140 +60,140 @@
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
-// void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
-// 	FILE *fpp = fopen(new_filename, "w+");
-// 	if(fpp) {
-// 		// Initialize the JSMN json parser
-// 		jsmn_parser parser;
-// 		jsmn_init(&parser);
+void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint * checkpoint) {
+	FILE *fpp = fopen(new_filename, "w+");
+	if(fpp) {
+		// Initialize the JSMN json parser
+		jsmn_parser parser;
+		jsmn_init(&parser);
 
-// 		// First only determine the number of tokens.
-// 		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
+		// First only determine the number of tokens.
+		int items = jsmn_parse(&parser, buffer, file_size, NULL, 128);
 
-// 		jsmntok_t tokens[items];
+		jsmntok_t tokens[items];
 		
-// 		// Reset position in stream
-// 		jsmn_init(&parser);
-// 		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
+		// Reset position in stream
+		jsmn_init(&parser);
+		int left = jsmn_parse(&parser, buffer, file_size, tokens, items);
 
-// 		// Invalid file.
-// 		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
-// 			printf("CRIU: INVALID JSON\n");
-// 			return -1;
-// 		}
+		// Invalid file.
+		if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+			printf("CRIU: INVALID JSON\n");
+			return -1;
+		}
 
-// 		// TLS indexes
-// 		int before_tls_value = 0;
-// 		int  after_tls_value = 0;
+		// TLS indexes
+		int before_tls_value = 0;
+		int  after_tls_value = 0;
 
-// 		// Regs indexes
-// 		int before_regs_value = 0;
-// 		int  after_regs_value = 0;
+		// Regs indexes
+		int before_regs_value = 0;
+		int  after_regs_value = 0;
 
-// 		// SP indexes
-// 		int before_sp_value = 0;
-// 		int  after_sp_value = 0;
+		// SP indexes
+		int before_sp_value = 0;
+		int  after_sp_value = 0;
 
-// 		// PC indexes
-// 		int before_pc_value = 0;
-// 		int  after_pc_value = 0;
+		// PC indexes
+		int before_pc_value = 0;
+		int  after_pc_value = 0;
 
-// 		// Pstate indexes
-// 		int before_pstate_value = 0;
-// 		int  after_pstate_value = 0;
+		// Pstate indexes
+		int before_pstate_value = 0;
+		int  after_pstate_value = 0;
 
-// 		// Vregs indexes
-// 		int before_vregs_value = 0;
-// 		int  after_vregs_value = 0;
+		// Vregs indexes
+		int before_vregs_value = 0;
+		int  after_vregs_value = 0;
 
-// 		// FPSR indexes
-// 		int before_fpsr_value = 0;
-// 		int  after_fpsr_value = 0;
+		// FPSR indexes
+		int before_fpsr_value = 0;
+		int  after_fpsr_value = 0;
 
-// 		// FPCR indexes
-// 		int before_fpcr_value = 0;
-// 		int  after_fpcr_value = 0;
+		// FPCR indexes
+		int before_fpcr_value = 0;
+		int  after_fpcr_value = 0;
 
-// 		// Parse the JSON version of the core checkpoint file (example core-2956.img)
-// 		for(int i = 1; i < items; i++) {
-// 			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
-// 				before_tls_value = tokens[i+1].start;
-// 				after_tls_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "regs") == 0) { 
-// 				before_regs_value = tokens[i+1].start;
-// 				after_regs_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "sp") == 0) {
-// 				before_sp_value = tokens[i+1].start;
-// 				after_sp_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
-// 				before_pc_value = tokens[i+1].start;
-// 				after_pc_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "pstate") == 0) {
-// 				before_pstate_value = tokens[i+1].start;
-// 				after_pstate_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
-// 				before_vregs_value = tokens[i+1].start;
-// 				after_vregs_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "fpsr") == 0) {
-// 				before_fpsr_value = tokens[i+1].start;
-// 				after_fpsr_value = tokens[i+1].end;
-// 			} else if (jsoneq(buffer, &tokens[i], "fpcr") == 0) {
-// 				before_fpcr_value = tokens[i+1].start;
-// 				after_fpcr_value = tokens[i+1].end;
-// 			}
-// 		}
+		// Parse the JSON version of the core checkpoint file (example core-2956.img)
+		for(int i = 1; i < items; i++) {
+			if (jsoneq(buffer, &tokens[i], "tls") == 0) { 
+				before_tls_value = tokens[i+1].start;
+				after_tls_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "regs") == 0) { 
+				before_regs_value = tokens[i+1].start;
+				after_regs_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "sp") == 0) {
+				before_sp_value = tokens[i+1].start;
+				after_sp_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "pc") == 0) {
+				before_pc_value = tokens[i+1].start;
+				after_pc_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "pstate") == 0) {
+				before_pstate_value = tokens[i+1].start;
+				after_pstate_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "vregs") == 0) {
+				before_vregs_value = tokens[i+1].start;
+				after_vregs_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "fpsr") == 0) {
+				before_fpsr_value = tokens[i+1].start;
+				after_fpsr_value = tokens[i+1].end;
+			} else if (jsoneq(buffer, &tokens[i], "fpcr") == 0) {
+				before_fpcr_value = tokens[i+1].start;
+				after_fpcr_value = tokens[i+1].end;
+			}
+		}
 
-// 		fprintf_substring(fpp, buffer, 0, before_tls_value);
+		fprintf_substring(fpp, buffer, 0, before_tls_value);
 
-// 		// Write tpidr_el0
-// 		fprintf(fpp, "%llu", checkpoint->tpidr_el0_addr); 
-// 		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
+		// Write tpidr_el0
+		fprintf(fpp, "%llu", checkpoint->regs.tpidr_el0_addr); 
+		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
 
-// 		// Write all updated registers
-// 		fputc('[', fpp);
-// 		for(int i = 0; i < 31; i++) {
-// 			fprintf(fpp, "\"0x%lx\"", checkpoint->regs[i]);
+		// Write all updated registers
+		fputc('[', fpp);
+		for(int i = 0; i < 31; i++) {
+			fprintf(fpp, "\"0x%lx\"", checkpoint->regs.regs[i]);
 			
-// 			if(i != 30)
-// 				fprintf(fpp, ",\n");
-// 		}
-// 		fputc(']', fpp);
-// 		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
+			if(i != 30)
+				fprintf(fpp, ",\n");
+		}
+		fputc(']', fpp);
+		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
 
-// 		// Write updated stack pointer
-// 		fprintf(fpp, "0x%lx", checkpoint->stack_addr);
-// 		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
+		// Write updated stack pointer
+		fprintf(fpp, "0x%lx", checkpoint->regs.stack_addr);
+		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
 
-// 		// Write updated program counter
-// 		fprintf(fpp, "0x%lx", checkpoint->entry_addr);
-// 		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
+		// Write updated program counter
+		fprintf(fpp, "0x%lx", checkpoint->regs.entry_addr);
+		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
 		
-// 		// Write updated pstate
-// 		fprintf(fpp, "0x%lx", checkpoint->pstate);
-// 		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
+		// Write updated pstate
+		fprintf(fpp, "0x%lx", checkpoint->regs.pstate);
+		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
 
-// 		// Write all updated vregs
-// 		fputc('[', fpp);
-// 		for(int i = 0; i < 64; i++) {
-// 			fprintf(fpp, "%llu", checkpoint->vregs[i]);
+		// Write all updated vregs
+		fputc('[', fpp);
+		for(int i = 0; i < 64; i++) {
+			fprintf(fpp, "%llu", checkpoint->regs.vregs[i]);
 
-// 			if(i != 63)
-// 				fprintf(fpp, ",\n");
-// 		}
-// 		fputc(']', fpp);
-// 		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
+			if(i != 63)
+				fprintf(fpp, ",\n");
+		}
+		fputc(']', fpp);
+		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
 
-// 		// Write updated fpsr
-// 		fprintf(fpp, "%lu", checkpoint->fpsr);
-// 		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
+		// Write updated fpsr
+		fprintf(fpp, "%lu", checkpoint->regs.fpsr);
+		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
 		
-// 		// Write updated fpcr
-// 		fprintf(fpp, "%lu", checkpoint->fpcr);
-// 		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
+		// Write updated fpcr
+		fprintf(fpp, "%lu", checkpoint->regs.fpcr);
+		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
 
-// 		fclose(fpp);
-// 	}
-// }
+		fclose(fpp);
+	}
+}
 
 // void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
 // 									struct criu_checkpoint_dirty_pages * dirty_pages_info,
@@ -644,12 +644,23 @@ int main(int argc, char *argv[])
 
 
 	shared_buffer_2_index = 0;
-	struct criu_checkpoint_regs * checkpoint_back = op.params[1].memref.parent->buffer;
+	memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer, sizeof(struct criu_checkpoint_regs));
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
-	printf("Got data back: %p - %p\n", checkpoint_back->entry_addr, checkpoint_back->pstate);
+	printf("Got data back: %p - %p\n", checkpoint.regs.entry_addr, checkpoint.regs.pstate);
 
-	// write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
+	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[1].memref.parent->buffer + shared_buffer_2_index;
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+
+	// checkpoint.pagemap
+	
+	printf("Number of dirty pages: %d - offset: %d\n", dirty_pages_info->dirty_page_count, dirty_pages_info->offset);
+	struct criu_dirty_page * entry = op.params[1].memref.parent->buffer + shared_buffer_2_index;
+	for(int i = 0; i < dirty_pages_info->dirty_page_count; i++) {
+		printf("[%d]: %p\n", i, entry[i].vaddr_start);
+	}
+
+	write_updated_core_checkpoint("modified_core.txt", checkpoint_files[CORE_FILE].buffer, checkpoint_files[CORE_FILE].file.file_size, &checkpoint);
 
 	// struct criu_checkpoint c;
 	// TAILQ_INIT(&c.dirty_pagemap);
