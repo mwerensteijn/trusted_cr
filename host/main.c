@@ -38,7 +38,8 @@
 
 #include <sys/socket.h> 
 #include <arpa/inet.h> 
-#define PORT 50007 
+
+#define PORT 50007
 
 #define O_PATH		010000000
 
@@ -59,7 +60,7 @@
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
 
-void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint_regs * checkpoint) {
+void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint * checkpoint) {
 	FILE *fpp = fopen(new_filename, "w+");
 	if(fpp) {
 		// Initialize the JSMN json parser
@@ -145,13 +146,13 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		fprintf_substring(fpp, buffer, 0, before_tls_value);
 
 		// Write tpidr_el0
-		fprintf(fpp, "%llu", checkpoint->tpidr_el0_addr); 
+		fprintf(fpp, "%llu", checkpoint->regs.tpidr_el0_addr); 
 		fprintf_substring(fpp, buffer, after_tls_value, before_regs_value);
 
 		// Write all updated registers
 		fputc('[', fpp);
 		for(int i = 0; i < 31; i++) {
-			fprintf(fpp, "\"0x%lx\"", checkpoint->regs[i]);
+			fprintf(fpp, "\"0x%lx\"", checkpoint->regs.regs[i]);
 			
 			if(i != 30)
 				fprintf(fpp, ",\n");
@@ -160,21 +161,21 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		fprintf_substring(fpp, buffer, after_regs_value, before_sp_value);
 
 		// Write updated stack pointer
-		fprintf(fpp, "0x%lx", checkpoint->stack_addr);
+		fprintf(fpp, "0x%lx", checkpoint->regs.stack_addr);
 		fprintf_substring(fpp, buffer, after_sp_value, before_pc_value);
 
 		// Write updated program counter
-		fprintf(fpp, "0x%lx", checkpoint->entry_addr);
+		fprintf(fpp, "0x%lx", checkpoint->regs.entry_addr);
 		fprintf_substring(fpp, buffer, after_pc_value, before_pstate_value);
 		
 		// Write updated pstate
-		fprintf(fpp, "0x%lx", checkpoint->pstate);
+		fprintf(fpp, "0x%lx", checkpoint->regs.pstate);
 		fprintf_substring(fpp, buffer, after_pstate_value, before_vregs_value);
 
 		// Write all updated vregs
 		fputc('[', fpp);
 		for(int i = 0; i < 64; i++) {
-			fprintf(fpp, "%llu", checkpoint->vregs[i]);
+			fprintf(fpp, "%llu", checkpoint->regs.vregs[i]);
 
 			if(i != 63)
 				fprintf(fpp, ",\n");
@@ -183,45 +184,40 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 		fprintf_substring(fpp, buffer, after_vregs_value, before_fpsr_value);
 
 		// Write updated fpsr
-		fprintf(fpp, "%lu", checkpoint->fpsr);
+		fprintf(fpp, "%lu", checkpoint->regs.fpsr);
 		fprintf_substring(fpp, buffer, after_fpsr_value, before_fpcr_value);
 		
 		// Write updated fpcr
-		fprintf(fpp, "%lu", checkpoint->fpcr);
+		fprintf(fpp, "%lu", checkpoint->regs.fpcr);
 		fprintf_substring(fpp, buffer, after_fpcr_value, file_size);
 
 		fclose(fpp);
 	}
 }
 
-void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
-									struct criu_checkpoint_dirty_pages * dirty_pages_info,
-									long * shared_buffer_2_index, char * original_buffer) {
+void write_updated_pages_checkpoint(struct criu_merged_pagemap * merged_map, struct criu_dirty_page * dirty_page, int dirty_page_count, void * page_data, char * original_buffer) {
 	FILE *fpages = fopen("modified_pages-1.img", "w+");
 	if(fpages) {
-		struct criu_pagemap_entry_tracker * entry = NULL;
-		struct criu_pagemap_entry * pagemap_entry = NULL;
-		TAILQ_FOREACH(entry, pagemap_entries, link) {
+		struct criu_merged_page * entry = NULL;
+		TAILQ_FOREACH(entry, merged_map, link) {
 			for(int i = 0; i < entry->entry.nr_pages; i++) {
 				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
-
-				bool dirty_page = false;
-				for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-					pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-					
-					if(addr == pagemap_entry->vaddr_start) {
+	
+				bool dirty = false;
+				for(int y = 0; y < dirty_page_count; y++) {
+					if(addr == dirty_page[y].vaddr_start) {
 						// Write dirty page
-						fwrite(parameter_buffer + dirty_pages_info->offset + y * 4096, 1, 4096, fpages);
-						printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
-						dirty_page = true;
+						fwrite(page_data + y * 4096, 1, 4096, fpages);
+						// printf("dirty page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+						dirty = true;
 						break;
 					}
 				}
 
-				if(!dirty_page) {
+				if(!dirty) {
 					// Write the original
 					fwrite(original_buffer + (entry->entry.file_page_index + i) * 4096, 1, 4096, fpages);
-					printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
+					// printf("clean page at: %p - index: %d\n", addr, entry->entry.file_page_index + i);
 				}
 			}
 		}
@@ -232,9 +228,7 @@ void write_updated_pages_checkpoint(void * parameter_buffer, struct criu_pagemap
 	}
 }
 
-void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagemap_entries * pagemap_entries,
-									struct criu_checkpoint_dirty_pages * dirty_pages_info,
-									long * shared_buffer_2_index, char * buffer, long file_size) {
+void write_updated_pagemap_checkpoint(struct criu_merged_pagemap * merged_pagemap, char * buffer, long file_size) {
 	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
 
 	if(fpagemap) {
@@ -272,49 +266,9 @@ void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagem
 		buffer[vaddr_start] = 0;
 		fprintf(fpagemap, "%s", buffer);
 		buffer[vaddr_start] = backup;	
-		struct criu_pagemap_entry_tracker * entry = NULL;
 
-		// FILE *fp = fopen("pages-1.new.img", "w+");
-		// // FILE *f  = fopen("pages-1.img", "rb");
-
-		printf("Number of dirty pages: %d\n", dirty_pages_info->dirty_page_count);
-		struct criu_pagemap_entry * pagemap_entry = NULL;
-
-
-
-		for(int y = 0; y < dirty_pages_info->dirty_page_count; y++) {
-			pagemap_entry = parameter_buffer + *shared_buffer_2_index + (sizeof(struct criu_pagemap_entry) * y) ;
-			bool skip = false;
-			bool insert_before = false;
-			TAILQ_FOREACH(entry, pagemap_entries, link) {
-				if((entry->entry.vaddr_start <= pagemap_entry->vaddr_start)  &&
-				(pagemap_entry->vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
-					skip = true;
-					break;
-				} else if(pagemap_entry->vaddr_start < entry->entry.vaddr_start) {
-					insert_before = true;
-					break;
-				}
-			}		
-
-			if(skip)
-				continue;
-
-			struct criu_pagemap_entry_tracker * new_entry = calloc(1, sizeof(struct criu_pagemap_entry_tracker));
-			
-			new_entry->entry.vaddr_start = pagemap_entry->vaddr_start;
-			new_entry->entry.nr_pages = pagemap_entry->nr_pages;
-			new_entry->entry.file_page_index = pagemap_entry->file_page_index;
-			new_entry->entry.flags = PE_LAZY | PE_PRESENT;
-
-			if(insert_before)
-				TAILQ_INSERT_BEFORE(entry, new_entry, link);
-			else
-				TAILQ_INSERT_TAIL(pagemap_entries, new_entry, link);
-		}
-
-
-		TAILQ_FOREACH(entry, pagemap_entries, link) {
+		struct criu_merged_page * entry = NULL;
+		TAILQ_FOREACH(entry, merged_pagemap, link) {
 			fprintf(fpagemap, "{\n\t\"vaddr\": \"0x%lx\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
 			
 			bool require_seperator = false;
@@ -344,24 +298,21 @@ void write_updated_pagemap_checkpoint(void * parameter_buffer, struct criu_pagem
 	}
 }
 
-int main(int argc, char *argv[])
-{
-	printf("OP-TEE App Migrator\n\n");
+int crit_execute(int sock, char * command, char * buffer) {
+    send(sock, command , strlen(command) , 0 ); 
+    // printf("CRIU decode message sent: %s\n", command); 
+    int valread = read( sock , buffer, 1024); 
+	buffer[valread] = '\0';
+    // printf("%s\n",buffer ); 
+	return valread;
+}
 
-	if(argc < 3) {
-		printf("Usage: optee_app_migrator $pid $executable_name\n");
-		exit(-1);
-	}
-
-	TEEC_Result res;
-	TEEC_Context ctx;
-	TEEC_Session sess;
-	TEEC_Operation op;
-	TEEC_SharedMemory shared_memory_1, shared_memory_2;
-
-	int sock = 0, valread; 
+bool decode_checkpoint(int pid) {
+	int sock = 0; 
     struct sockaddr_in serv_addr; 
     char buffer[1024] = {0}; 
+	char command[100];
+
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
     { 
         printf("\n Socket creation error \n"); 
@@ -378,53 +329,80 @@ int main(int argc, char *argv[])
         return -1; 
     } 
 
-    char command[100];
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
     { 
         printf("Connection to CRIT server failed.\n");
         printf("Is it running?\n"); 
         return -1; 
     } 
-	snprintf(command, 100, "decode -i check/core-%s.img --pretty -o core-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
-
-	snprintf(command, 100, "decode -i check/pagemap-%s.img --pretty -o pagemap-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
-
-	snprintf(command, 100, "decode -i check/mm-%s.img --pretty -o mm-%s.txt", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
-
-	// To hold the checkpoint file info
-	struct checkpoint_file_data files[CHECKPOINT_FILES] = {};
 	
-	TEEC_UUID uuid = PTA_CRIU_UUID;
-	uint32_t err_origin;
+	snprintf(command, 100, "decode -i check/core-%d.img --pretty -o core-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
 
-	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {
-	};
+	snprintf(command, 100, "decode -i check/pagemap-%d.img --pretty -o pagemap-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
 
-	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%s.txt", argv[1]);
-	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%s.txt", argv[1]);
-	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%s.txt", argv[1]);
-	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img", argv[1]);
-	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", argv[2]);
+	snprintf(command, 100, "decode -i check/mm-%d.img --pretty -o mm-%d.txt", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	close(sock);
+
+	return true;
+}
+
+bool encode_checkpoint(int pid) {
+	int sock = 0; 
+    struct sockaddr_in serv_addr; 
+    char buffer[1024] = {0}; 
+	char command[100];
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+    { 
+        printf("\n Socket creation error \n"); 
+        return -1; 
+    } 
+   
+    serv_addr.sin_family = AF_INET; 
+    serv_addr.sin_port = htons(PORT); 
+       
+    // Convert IPv4 and IPv6 addresses from text to binary form 
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)  
+    { 
+        printf("\nInvalid address/ Address not supported \n"); 
+        return -1; 
+    } 
+
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+    { 
+        printf("Connection to CRIT server failed.\n");
+        printf("Is it running?\n"); 
+        return -1; 
+    } 
+
+	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%d.img", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%d.img", pid, pid);
+	crit_execute(sock, command, buffer);
+
+	close(sock);
+
+	return true;
+}
+
+int read_checkpoint_files(int pid, char * executable_name, struct checkpoint_file_data * files) {
+	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
+
+	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%d.txt", pid);
+	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%d.txt", pid);
+	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%d.txt", pid);
+	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img");
+	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", executable_name);
 	
 	// Total size of the shared buffer 1, which contains all checkpoint files together.
 	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		printf("%d: %s\n", i, filenames[i]);
+		// printf("%d: %s\n", i, filenames[i]);
 
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
@@ -435,50 +413,129 @@ int main(int argc, char *argv[])
 			shared_buffer_1_size += files[i].file.file_size;
 	}
 
-	printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
+	return shared_buffer_1_size;
+}
 
+void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_checkpoint * checkpoint, struct criu_dirty_page * dirty_entry, int dirty_page_count);
+
+int main(int argc, char *argv[])
+{
+	// printf("OP-TEE App Migrator\n\n");
+
+	if(argc < 3) {
+		printf("Usage: optee_app_migrator $pid $executable_name\n");
+		exit(-1);
+	}
+
+	int pid = strtoul(argv[1], NULL, 10);
+	char * executable_name = argv[2];
+
+	TEEC_Result res;
+	TEEC_Context ctx;
+	TEEC_Session sess;
+	TEEC_Operation op;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+	TEEC_UUID uuid = PTA_CRIU_UUID;
+	uint32_t err_origin;
+
+	if(!decode_checkpoint(pid)) {
+		perror("Unable to decode checkpoint\n");
+	}
+
+	// To hold the checkpoint file info
+	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
+	// TODO: make it a if(true) otherwise exit
+	read_checkpoint_files(pid, executable_name, checkpoint_files);
+
+	struct criu_checkpoint checkpoint;
+
+	if(!parse_checkpoint_core(&checkpoint, &checkpoint_files)) {
+		perror("Unable to parse core-file.\n");
+	}
+
+	if(!parse_checkpoint_mm(&checkpoint, &checkpoint_files)) {
+		perror("Unable to parse mm-file.\n");
+	}
+
+	if(!parse_checkpoint_pagemap(&checkpoint, &checkpoint_files)) {
+		perror("Unable to parse pagemap-file.\n");
+	}
+
+	int shared_buffer_1_size = sizeof(struct criu_checkpoint) 
+								+ checkpoint.vm_area_count * sizeof(struct criu_vm_area)
+								+ checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	
+	// printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
 	// Allocate space for shared buffer 1
-	char * shared_buffer_1 = malloc(shared_buffer_1_size);
+	void * shared_buffer_1 = malloc(shared_buffer_1_size);
+	long   shared_buffer_1_index = 0;
 	if(shared_buffer_1 == NULL) {
 		printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
 		return -1;
 	}
 
-	printf("Loading checkpoint files into the buffer... ");
-	long shared_buffer_1_index = 0;
-	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-		// First copy the data from the checkpoint file buffer to shared buffer 1 at the correct index
-		memcpy(shared_buffer_1 + shared_buffer_1_index, files[i].buffer, files[i].file.file_size);
-		// Store the index so we can send that info later in shared buffer 2
-		files[i].file.buffer_index = shared_buffer_1_index;
-		// Will be overwritten by the next memcpy, except for the last entry
-		shared_buffer_1[shared_buffer_1_index + files[i].file.file_size] = 0;
+	// printf("Loading checkpoint files into the buffer... ");
 
-		shared_buffer_1_index += files[i].file.file_size;
-	}
-	printf("done!\n");
+	// Copy the checkpoint struct with the registers
+	int size = sizeof(struct criu_checkpoint);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, &checkpoint, size);
+	shared_buffer_1_index += size;
+	
+	// Copy over the vm areas
+	size = checkpoint.vm_area_count * sizeof(struct criu_vm_area);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.vm_areas, size);
+	shared_buffer_1_index += size;
+
+	// Copy over the pagemap entries
+	size = checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.pagemap_entries, size);
+	shared_buffer_1_index += size;
+
+	// printf("done!\n");
 
 	// Setup the structs that will go into shared buffer 2
-	struct checkpoint_file * checkpoint_files = malloc(sizeof(struct checkpoint_file) * CHECKPOINT_FILES);
-	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-		checkpoint_files[i].file_type = (enum checkpoint_file_types) i;
-		checkpoint_files[i].file_size = files[i].file.file_size;
-		checkpoint_files[i].buffer_index = files[i].file.buffer_index;
-	}
+	long shared_buffer_2_size = 2 * sizeof(struct checkpoint_file) 
+									+ checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size
+									+ checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	void * shared_buffer_2 = malloc(shared_buffer_2_size);
+	int shared_buffer_2_index = 0;
+	
+	struct checkpoint_file * binary_data = shared_buffer_2;
+	// Store the executable file descriptor
+	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
+	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
+	// Store the pagedata descriptor
+	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
+												+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
 
+	// Store the executable
+	size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+	// Store the pagedata
+	size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+
+	
+	
 	/* Initialize a context connecting us to the TEE */
 	res = TEEC_InitializeContext(NULL, &ctx);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InitializeContext failed with code 0x%x", res);
+		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
 
 	/*
-	 * Open a session to the "hello world" TA, the TA will print "hello
-	 * world!" in the log when the session is created.
+	 * Open a session to the TA
 	 */
 	res = TEEC_OpenSession(&ctx, &sess, &uuid,
 			       TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_Opensession failed with code 0x%x origin 0x%x",
+		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
 	// Setup shared memory buffer 1
@@ -488,17 +545,17 @@ int main(int argc, char *argv[])
 
 	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
 	// Setup shared memory buffer 2
-	shared_memory_2.size = sizeof(struct checkpoint_file) * CHECKPOINT_FILES_TO_TRANSFER;
+	shared_memory_2.size = shared_buffer_2_size;
 	shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-	shared_memory_2.buffer = checkpoint_files;
+	shared_memory_2.buffer = shared_buffer_2;
 
 	res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%x origin 0x%x",
+		errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
 	/* Clear the TEEC_Operation struct */
@@ -517,14 +574,7 @@ int main(int argc, char *argv[])
 	op.params[1].memref.parent = &shared_memory_2;
 	op.params[1].memref.size = shared_memory_2.size;
 	op.params[1].memref.offset = 0;
-
-#ifdef DEBUG
-	struct checkpoint_file * checkpoint_file_var = checkpoint_files;
-	for(int i = 0; i < CHECKPOINT_FILES_TO_TRANSFER; i++) {
-		printf("checkpoint file: type %lu - index %lu\t- size %lu\n", checkpoint_file_var[i].file_type, checkpoint_file_var[i].buffer_index, checkpoint_file_var[i].file_size);
-	}
-#endif
-
+	
 	/*
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
@@ -533,21 +583,17 @@ int main(int argc, char *argv[])
 	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
 				&err_origin);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
 
-	enum criu_return_types * return_type = op.params[0].memref.parent->buffer;
-	enum criu_return_types ret_type;
 	do {
-		ret_type = *return_type;
 		bool continue_execution = false;
-		long index = 0;
-		index += sizeof(enum criu_return_types);
-		struct criu_checkpoint_regs * checkpoint_regs = op.params[0].memref.parent->buffer + index;
-		index += sizeof(struct criu_checkpoint_regs);
+		
+		memcpy(&checkpoint.result, op.params[1].memref.parent->buffer, sizeof(enum criu_return_types));
+		memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	criu_return_types), sizeof(struct criu_checkpoint_regs));
 
 		printf("TA returned from secure world: ");
-		switch(ret_type) {
+		switch(checkpoint.result) {
 			case CRIU_SYSCALL_EXIT:
 				printf("EXIT system call!\n");
 				break;
@@ -567,24 +613,24 @@ int main(int argc, char *argv[])
 			res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
 						&err_origin);
 			if (res != TEEC_SUCCESS) {
-				errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+				errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
 					res, err_origin);
 				break;
 			}
 		} else {
 			break;
 		}
-	} while(ret_type != CRIU_SYSCALL_EXIT &&
-		    ret_type != CRIU_SYSCALL_UNSUPPORTED &&
-			ret_type != CRIU_MIGRATE_BACK);
+	} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
+		    checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
+			checkpoint.result != CRIU_MIGRATE_BACK);
 	
-	printf("\nCheckpointing data back\n");
+	// printf("\nCheckpointing data back\n");
 	res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
 				&err_origin);
 	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InvokeCommand failed with code 0x%x origin 0x%x",
+		errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
 			res, err_origin);
-	printf("TA returned from secure world\n");
+	// printf("TA returned from secure world\n");
 
 			// As the memory buffers where shared, the data can be changed in the secure world.
 			// After running the checkpoint in the secure world, the secure world checkpoints back
@@ -594,67 +640,109 @@ int main(int argc, char *argv[])
 			// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
 
-	long shared_buffer_2_index = 0;
-	struct criu_checkpoint_regs * checkpoint = op.params[0].memref.parent->buffer;
+	shared_buffer_2_index = 0;
+	memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer, sizeof(struct criu_checkpoint_regs));
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
-	write_updated_core_checkpoint("modified_core.txt", files[CORE_FILE].buffer, files[CORE_FILE].file.file_size, checkpoint);
-
-	struct criu_pagemap_entries pagemap_entries;
-	TAILQ_INIT(&pagemap_entries);
-
-	parse_checkpoint_pagemap(&pagemap_entries, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
-
-	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[0].memref.parent->buffer + shared_buffer_2_index;
+	struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[1].memref.parent->buffer + shared_buffer_2_index;
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
 
-	write_updated_pagemap_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGEMAP_FILE].buffer, files[PAGEMAP_FILE].file.file_size);
-	
-	write_updated_pages_checkpoint(op.params[0].memref.parent->buffer, &pagemap_entries, dirty_pages_info, &shared_buffer_2_index, files[PAGES_BINARY_FILE].buffer);
+	struct criu_dirty_page * dirty_entry = op.params[1].memref.parent->buffer + shared_buffer_2_index;
+	shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct criu_dirty_page);
 
-	// Give the memory back
+	struct criu_merged_pagemap merged_map;
+	TAILQ_INIT(&merged_map);
+
+	create_merged_map(&merged_map, &checkpoint, dirty_entry, dirty_pages_info->dirty_page_count);
+
+	// struct criu_merged_page * e = NULL;
+	// TAILQ_FOREACH(e, &merged_map, link) {
+	// 	printf("[%d] entry: %p - nr pages: %d\n", e->is_new, e->entry.vaddr_start, e->entry.nr_pages);
+	// }
+
+	write_updated_core_checkpoint("modified_core.txt", checkpoint_files[CORE_FILE].buffer, checkpoint_files[CORE_FILE].file.file_size, &checkpoint);
+
+
+	write_updated_pagemap_checkpoint(&merged_map, checkpoint_files[PAGEMAP_FILE].buffer, checkpoint_files[PAGEMAP_FILE].file.file_size);
+
+	write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, op.params[1].memref.parent->buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
+
+
+	// // Give the memory back
 	TEEC_ReleaseSharedMemory(&shared_memory_1);
 	TEEC_ReleaseSharedMemory(&shared_memory_2);
 
 	free(shared_buffer_1);
-	free(checkpoint_files);
 
 	for(int i = 0; i < CHECKPOINT_FILES; i++) {
-		free(files[i].buffer);
+		free(checkpoint_files[i].buffer);
 	}
 
 	// Free all allocated criu_pagemap_entry structs
-	struct criu_pagemap_entry_tracker * entry = NULL;
-	TAILQ_FOREACH(entry, &pagemap_entries, link) {
+	struct criu_merged_page * entry = NULL;
+	TAILQ_FOREACH(entry, &merged_map, link) {
 		free(entry);
 	}
 	
-	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%s.img", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU encode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer ); 
+	encode_checkpoint(pid);
 
-	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%s.img", argv[1], argv[1]);
-    send(sock , command , strlen(command) , 0 ); 
-    // printf("CRIU encode message sent: %s\n", command); 
-    valread = read( sock , buffer, 1024); 
-	buffer[valread] = '\0';
-    // printf("%s\n",buffer );
-
-	/*
-	 * We're done with the TA, close the session and
-	 * destroy the context.
-	 *
-	 * The TA will print "Goodbye!" in the log when the
-	 * session is closed.
-	 */
+	// /*
+	//  * We're done with the TA, close the session and
+	//  * destroy the context.
+	//  *
+	//  * The TA will print "Goodbye!" in the log when the
+	//  * session is closed.
+	//  */
 	TEEC_CloseSession(&sess);
 	TEEC_FinalizeContext(&ctx);
 
 	return 0;
 }
+
+
+void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_checkpoint * checkpoint, 
+					   struct criu_dirty_page * dirty_entry, int dirty_page_count) {
+	for(int i = 0; i < checkpoint->pagemap_entry_count; i++) {
+		struct criu_merged_page * new_entry = calloc(1, sizeof(struct criu_merged_page));
+		new_entry->is_new = false;
+		memcpy(&new_entry->entry, &checkpoint->pagemap_entries[i], sizeof(struct criu_pagemap_entry));
+
+		TAILQ_INSERT_TAIL(merged_map, new_entry, link);
+	}
+
+	for(int i = 0; i < dirty_page_count; i++) {
+		bool skip = false;
+		bool insert_before = false;
+		struct criu_merged_page * entry = NULL;
+		TAILQ_FOREACH(entry, merged_map, link) {
+			if((entry->entry.vaddr_start <= dirty_entry[i].vaddr_start)  &&
+			(dirty_entry[i].vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
+				skip = true;
+				break;
+			} else if(dirty_entry[i].vaddr_start < entry->entry.vaddr_start) {
+				insert_before = true;
+				break;
+			}
+		}		
+
+		if(skip)
+			continue;
+
+		struct criu_merged_page * new_entry = calloc(1, sizeof(struct criu_merged_page));
+		
+		new_entry->entry.vaddr_start = dirty_entry[i].vaddr_start;
+		new_entry->entry.nr_pages = 1;
+		new_entry->entry.file_page_index = -1;
+		new_entry->entry.flags = PE_LAZY | PE_PRESENT;
+		new_entry->is_new = true;
+
+		if(insert_before)
+			TAILQ_INSERT_BEFORE(entry, new_entry, link);
+		else
+			TAILQ_INSERT_TAIL(merged_map, new_entry, link);
+	}
+}
+
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index) {
 	char backup = buffer[end_index];
