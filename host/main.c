@@ -392,7 +392,7 @@ bool encode_checkpoint(int pid) {
 	return true;
 }
 
-void read_checkpoint_files(int pid, char * executable_name, struct checkpoint_file_data * files) {
+void read_checkpoint_files(int pid, struct checkpoint_file_data * files) {
 	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
 
 	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%d.txt", pid);
@@ -402,12 +402,13 @@ void read_checkpoint_files(int pid, char * executable_name, struct checkpoint_fi
 	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img");
 	
 	// Skip the last EXECUTABLE_BINARY_FILE, because we do not know the executable name yet which is parsed from FILES_FILE
-	for(int i = CORE_FILE; i < PAGES_BINARY_FILE; i++) {
-		// printf("%d: %s\n", i, filenames[i]);
+	for(int i = CORE_FILE; i <= PAGES_BINARY_FILE; i++) {
 
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
 		read_file(&files[i]);
+
+		// printf("%d: %s - size: %d\n", i, filenames[i], files[i].file.file_size);
 	}
 }
 
@@ -417,13 +418,12 @@ int main(int argc, char *argv[])
 {
 	// printf("OP-TEE App Migrator\n\n");
 
-	if(argc < 3) {
-		printf("Usage: optee_app_migrator $pid $executable_name\n");
+	if(argc < 2) {
+		printf("Usage: optee_app_migrator $pid\n");
 		exit(-1);
 	}
 
 	int pid = strtoul(argv[1], NULL, 10);
-	char * executable_name = argv[2];
 
 	TEEC_Result res;
 	TEEC_Context ctx;
@@ -440,7 +440,7 @@ int main(int argc, char *argv[])
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
 	// TODO: make it a if(true) otherwise exit
-	read_checkpoint_files(pid, executable_name, checkpoint_files);
+	read_checkpoint_files(pid, checkpoint_files);
 
 	struct criu_checkpoint checkpoint;
 
@@ -460,7 +460,8 @@ int main(int argc, char *argv[])
 		perror("Unable the parse the executable name from files.img.\n");
 	}
 
-	exit(0);
+	// Now that we have parsed the executable filename from the checkpoint file, we can load it.
+	read_file(&checkpoint_files[EXECUTABLE_BINARY_FILE]);
 
 	int shared_buffer_1_size = sizeof(struct criu_checkpoint) 
 								+ checkpoint.vm_area_count * sizeof(struct criu_vm_area)
@@ -503,15 +504,15 @@ int main(int argc, char *argv[])
 	
 	struct checkpoint_file * binary_data = shared_buffer_2;
 	// Store the executable file descriptor
-	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
-	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
-	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
+	binary_data[0].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
+	binary_data[0].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	binary_data[0].buffer_index = 2 * sizeof(struct checkpoint_file);
 	shared_buffer_2_index += sizeof(struct checkpoint_file);
 	// Store the pagedata descriptor
-	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
-	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-	binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
-												+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
+	binary_data[1].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[1].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[1].buffer_index = binary_data[0].buffer_index
+												+ binary_data[0].file_size;
 	shared_buffer_2_index += sizeof(struct checkpoint_file);
 
 	// Store the executable
@@ -522,8 +523,6 @@ int main(int argc, char *argv[])
 	size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
 	memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer, size);
 	shared_buffer_2_index += size;
-
-	
 	
 	/* Initialize a context connecting us to the TEE */
 	res = TEEC_InitializeContext(NULL, &ctx);
@@ -580,7 +579,7 @@ int main(int argc, char *argv[])
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
 	*/
-	printf("\nLoading & executing checkpoint\n");
+	printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
 	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
 				&err_origin);
 	if (res != TEEC_SUCCESS)
