@@ -53,8 +53,7 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-#define CHECKPOINT_FILES 5 
-#define CHECKPOINT_FILES_TO_TRANSFER 5
+#define CHECKPOINT_FILES 6 
 #define CHECKPOINT_FILENAME_MAXLENGTH 40
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
@@ -345,6 +344,9 @@ bool decode_checkpoint(int pid) {
 	snprintf(command, 100, "decode -i check/mm-%d.img --pretty -o mm-%d.txt", pid, pid);
 	crit_execute(sock, command, buffer);
 
+	snprintf(command, 100, "decode -i check/files.img --pretty -o files.txt", pid, pid);
+	crit_execute(sock, command, buffer);
+
 	close(sock);
 
 	return true;
@@ -390,30 +392,23 @@ bool encode_checkpoint(int pid) {
 	return true;
 }
 
-int read_checkpoint_files(int pid, char * executable_name, struct checkpoint_file_data * files) {
+void read_checkpoint_files(int pid, char * executable_name, struct checkpoint_file_data * files) {
 	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
 
 	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%d.txt", pid);
 	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%d.txt", pid);
 	snprintf(filenames[PAGEMAP_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pagemap-%d.txt", pid);
+	snprintf(filenames[FILES_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "files.txt");
 	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img");
-	snprintf(filenames[EXECUTABLE_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "%s", executable_name);
 	
-	// Total size of the shared buffer 1, which contains all checkpoint files together.
-	int shared_buffer_1_size = 1; // At least 1 for the ending \0 character.
-	for(int i = 0; i < CHECKPOINT_FILES; i++) {
+	// Skip the last EXECUTABLE_BINARY_FILE, because we do not know the executable name yet which is parsed from FILES_FILE
+	for(int i = CORE_FILE; i < PAGES_BINARY_FILE; i++) {
 		// printf("%d: %s\n", i, filenames[i]);
 
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
 		read_file(&files[i]);
-
-		// Increase the buffer size
-		if (i < CHECKPOINT_FILES_TO_TRANSFER)
-			shared_buffer_1_size += files[i].file.file_size;
 	}
-
-	return shared_buffer_1_size;
 }
 
 void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_checkpoint * checkpoint, struct criu_dirty_page * dirty_entry, int dirty_page_count);
@@ -460,6 +455,12 @@ int main(int argc, char *argv[])
 	if(!parse_checkpoint_pagemap(&checkpoint, &checkpoint_files)) {
 		perror("Unable to parse pagemap-file.\n");
 	}
+
+	if(!parse_executable_name(&checkpoint_files)) {
+		perror("Unable the parse the executable name from files.img.\n");
+	}
+
+	exit(0);
 
 	int shared_buffer_1_size = sizeof(struct criu_checkpoint) 
 								+ checkpoint.vm_area_count * sizeof(struct criu_vm_area)
