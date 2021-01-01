@@ -54,7 +54,7 @@
 #include <optee_app_migrator_ta.h>
 
 #define CHECKPOINT_FILES 6 
-#define CHECKPOINT_FILENAME_MAXLENGTH 40
+#define CHECKPOINT_FILENAME_MAXLENGTH 100
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
 bool read_file(struct checkpoint_file_data * c_file);
@@ -402,8 +402,7 @@ void read_checkpoint_files(int pid, struct checkpoint_file_data * files) {
 	snprintf(filenames[PAGES_BINARY_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "pages-1.img");
 	
 	// Skip the last EXECUTABLE_BINARY_FILE, because we do not know the executable name yet which is parsed from FILES_FILE
-	for(int i = CORE_FILE; i <= PAGES_BINARY_FILE; i++) {
-
+	for(int i = PAGES_BINARY_FILE; i <= FILES_FILE; i++) {
 		// Set the filename, load the filesize and read the file from disk into the buffer
 		files[i].filename = filenames[i];
 		read_file(&files[i]);
@@ -504,15 +503,15 @@ int main(int argc, char *argv[])
 	
 	struct checkpoint_file * binary_data = shared_buffer_2;
 	// Store the executable file descriptor
-	binary_data[0].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
-	binary_data[0].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
-	binary_data[0].buffer_index = 2 * sizeof(struct checkpoint_file);
+	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
+	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
 	shared_buffer_2_index += sizeof(struct checkpoint_file);
 	// Store the pagedata descriptor
-	binary_data[1].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
-	binary_data[1].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-	binary_data[1].buffer_index = binary_data[0].buffer_index
-												+ binary_data[0].file_size;
+	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
+												+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
 	shared_buffer_2_index += sizeof(struct checkpoint_file);
 
 	// Store the executable
@@ -579,7 +578,7 @@ int main(int argc, char *argv[])
 	* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 	* called.
 	*/
-	printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
+	printf("\nLoading & executing checkpoint\n");
 	res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
 				&err_origin);
 	if (res != TEEC_SUCCESS)
