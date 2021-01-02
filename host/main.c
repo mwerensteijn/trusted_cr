@@ -239,14 +239,15 @@ void secure_execute(int pid) {
 
 		// Shared buffer 1 contains the checkpoint struct
 		prepare_shared_buffer_1(&checkpoint, &shared_buffer_1, &shared_memory_1);
-	
+
+		// Shared buffer 2 contains the executable data and binary pagedata
+		prepare_shared_buffer_2(&checkpoint_files, &shared_buffer_2, &shared_memory_2);
+
+		// Register shared memory buffers
 		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 				res, err_origin);
-
-		// Shared buffer 2 contains the executable data and binary pagedata
-		prepare_shared_buffer_2(&checkpoint_files, &shared_buffer_2, &shared_memory_2);
 
 		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
 		if (res != TEEC_SUCCESS)
@@ -270,16 +271,11 @@ void secure_execute(int pid) {
 		op.params[1].memref.size = shared_memory_2.size;
 		op.params[1].memref.offset = 0;
 		
-		/*
-		* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
-		* called.
-		*/
+		/* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be called. */
 		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
-		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
-					&err_origin);
+		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-				res, err_origin);
+			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 
 		do {
 			bool continue_execution = false;
@@ -331,75 +327,32 @@ void secure_execute(int pid) {
 				res, err_origin);
 		// printf("TA returned from secure world\n");
 
-				// As the memory buffers where shared, the data can be changed in the secure world.
-				// After running the checkpoint in the secure world, the secure world checkpoints back
-				// and puts the updated checkpoint values in the parameters.
-				
-				// TODO: implement checking the parameter for correct lengths
-				// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
+		encode_modified_data(&checkpoint, &checkpoint_files, op.params[1].memref.parent->buffer);
 
-
-		int shared_buffer_2_index = 0;
-		memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer, sizeof(struct criu_checkpoint_regs));
-		shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
-
-		struct criu_checkpoint_dirty_pages * dirty_pages_info = op.params[1].memref.parent->buffer + shared_buffer_2_index;
-		shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
-
-		struct criu_dirty_page * dirty_entry = op.params[1].memref.parent->buffer + shared_buffer_2_index;
-		shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct criu_dirty_page);
-
-		struct criu_merged_pagemap merged_map;
-		TAILQ_INIT(&merged_map);
-
-		create_merged_map(&merged_map, &checkpoint, dirty_entry, dirty_pages_info->dirty_page_count);
-
-		// struct criu_merged_page * e = NULL;
-		// TAILQ_FOREACH(e, &merged_map, link) {
-		// 	printf("[%d] entry: %p - nr pages: %d\n", e->is_new, e->entry.vaddr_start, e->entry.nr_pages);
-		// }
-
-		write_updated_core_checkpoint("modified_core.txt", checkpoint_files[CORE_FILE].buffer, checkpoint_files[CORE_FILE].file.file_size, &checkpoint);
-
-
-		write_updated_pagemap_checkpoint(&merged_map, checkpoint_files[PAGEMAP_FILE].buffer, checkpoint_files[PAGEMAP_FILE].file.file_size);
-
-		write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, op.params[1].memref.parent->buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
-
-		// // Give the memory back
+		// Release and free all allocated memory
 		TEEC_ReleaseSharedMemory(&shared_memory_1);
 		TEEC_ReleaseSharedMemory(&shared_memory_2);
+
 		free(shared_buffer_1);
 		free(shared_buffer_2);
 
-		// Do this better.. cleaner.. I now do -1 because PSTREE_FILE might not be allocated..
-		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES - 1; i++) {
+		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES; i++) {
 			free(checkpoint_files[i].buffer);
-		}
-
-		// Free all allocated criu_pagemap_entry structs
-		struct criu_merged_page * entry = NULL;
-		TAILQ_FOREACH(entry, &merged_map, link) {
-			free(entry);
 		}
 		
 		critserver_encode_checkpoint(pid);
 
-		// /*
-		//  * We're done with the TA, close the session and
-		//  * destroy the context.
-		//  *
-		//  * The TA will print "Goodbye!" in the log when the
-		//  * session is closed.
-		//  */
+		// We're done with the TA, close the session and destroy the context.
 		TEEC_CloseSession(&sess);
 		TEEC_FinalizeContext(&ctx);
 
+		// Copy back the patched pages-1.img file
 		system("cp -rf modified_pages-1.img check/pages-1.img");
 
 		// Check return value of criu, on fail exit.
 		if(!stop_execution) {
-			printf("Going to execute criu.sh\n");
+			// Add #ifdef DEBUG
+			// printf("Going to execute criu.sh\n");
 			system("./criu.sh execute -D check --shell-job -v0");
 		}
 	}

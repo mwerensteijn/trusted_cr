@@ -293,4 +293,38 @@ void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_chec
 	}
 }
 
+void encode_modified_data(struct criu_checkpoint * checkpoint, struct checkpoint_file_data * checkpoint_files, void * shared_memory_buffer) {
+	int shared_buffer_2_index = 0;
+	memcpy(&checkpoint->regs, shared_memory_buffer, sizeof(struct criu_checkpoint_regs));
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+
+	struct criu_checkpoint_dirty_pages * dirty_pages_info = shared_memory_buffer + shared_buffer_2_index;
+	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+
+	struct criu_dirty_page * dirty_entry = shared_memory_buffer + shared_buffer_2_index;
+	shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct criu_dirty_page);
+
+	struct criu_merged_pagemap merged_map;
+	TAILQ_INIT(&merged_map);
+
+	create_merged_map(&merged_map, checkpoint, dirty_entry, dirty_pages_info->dirty_page_count);
+
+	// struct criu_merged_page * e = NULL;
+	// TAILQ_FOREACH(e, &merged_map, link) {
+	// 	printf("[%d] entry: %p - nr pages: %d\n", e->is_new, e->entry.vaddr_start, e->entry.nr_pages);
+	// }
+
+	write_updated_core_checkpoint("modified_core.txt", checkpoint_files[CORE_FILE].buffer, checkpoint_files[CORE_FILE].file.file_size, checkpoint);
+
+	write_updated_pagemap_checkpoint(&merged_map, checkpoint_files[PAGEMAP_FILE].buffer, checkpoint_files[PAGEMAP_FILE].file.file_size);
+
+	write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, shared_memory_buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
+
+	// Free all allocated criu_pagemap_entry structs
+	struct criu_merged_page * entry = NULL;
+	TAILQ_FOREACH(entry, &merged_map, link) {
+		free(entry);
+	}
+}
+
 #endif /* ENCODING_H */
