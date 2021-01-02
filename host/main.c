@@ -753,12 +753,15 @@ int main(int argc, char *argv[])
 			printf("TA returned from secure world: ");
 			switch(checkpoint.result) {
 				case CRIU_SYSCALL_EXIT:
+					stop_execution = true;
 					printf("EXIT system call!\n");
 					break;
 				case CRIU_SYSCALL_UNSUPPORTED:
 					printf("unsupported system call.\n");
 					break;
 				case CRIU_MIGRATE_BACK:
+					// TODO: stop execution but restore normal execution with criu.
+					stop_execution = true;
 					printf("Secure world wants to migrate back.\n");
 					break;
 				default:
@@ -832,6 +835,7 @@ int main(int argc, char *argv[])
 
 		free(shared_buffer_1);
 
+		// Do this better.. cleaner.. I now do -1 because PSTREE_FILE might not be allocated..
 		for(int i = 0; i < CHECKPOINT_FILES - 1; i++) {
 			free(checkpoint_files[i].buffer);
 		}
@@ -854,13 +858,13 @@ int main(int argc, char *argv[])
 		TEEC_CloseSession(&sess);
 		TEEC_FinalizeContext(&ctx);
 
-		// stop_execution = true;
-
-		// IF result != SYS_EXIT
-		printf("Going to execute criu.sh\n");
 		system("cp -rf modified_pages-1.img check/pages-1.img");
-		// Check return value of criu
-		system("./criu.sh execute -D check --shell-job -v0");
+
+		// Check return value of criu, on fail exit.
+		if(!stop_execution) {
+			printf("Going to execute criu.sh\n");
+			system("./criu.sh execute -D check --shell-job -v0");
+		}
 	}
 
 	// Check if it is actually used.. otherwise we are freeing a non-malloced entry..
