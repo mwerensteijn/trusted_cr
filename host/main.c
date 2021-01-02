@@ -413,16 +413,86 @@ void read_checkpoint_files(int pid, struct checkpoint_file_data * files) {
 
 void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_checkpoint * checkpoint, struct criu_dirty_page * dirty_entry, int dirty_page_count);
 
+void print_usage() {
+	printf("Usage: optee_app_migrator $pid\n");
+}
+
 int main(int argc, char *argv[])
 {
-	// printf("OP-TEE App Migrator\n\n");
+	printf("OP-TEE App Migrator\n\n");
 
 	if(argc < 2) {
-		printf("Usage: optee_app_migrator $pid\n");
+		print_usage();
 		exit(-1);
 	}
 
-	int pid = strtoul(argv[1], NULL, 10);
+	int pid = -1;
+
+	if(!strcmp(argv[1], "-m")) {
+		if(argc < 3) {
+			printf("Missing process id\n");
+			printf("Usage: -m <pid>\n");
+			exit(-1);
+		}
+
+		pid = strtoul(argv[2], NULL, 10);
+	} else if (!strcmp(argv[1], "-p")) {
+		if(argc < 3) {
+			printf("Missing process id\n");
+			printf("Usage: -p <pid>\n");
+			exit(-1);
+		}
+
+		pid = strtoul(argv[2], NULL, 10);
+	} else {
+		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -- ";
+
+		//  All of this just to determine the full size of the final string
+		int arguments = argc - 1;
+		int total_size = strlen(command) + 1; // +1 for the 0-terminator
+		for(int i = 0; i < arguments; i++) {
+			total_size += strlen(argv[i+1]);
+
+ 			// Because we need a space between the arguments
+			if((i+1) != arguments)
+				total_size += 1;
+		}
+
+		// We can now allocate the full command.
+		char * full_command = malloc(total_size);
+
+		// Copy over the first part of the command "./criu.sh start -D check --shell-job --exec-cmd -- " 
+		int index = 0;
+		int size = strlen(command);
+		memcpy(full_command, command, size);
+		index += size;
+
+		// Now append the rest of the arguments after the first part of the command
+		for(int i = 0; i < arguments; i++) {
+			size = strlen(argv[i+1]);
+
+			if((i+1) != arguments) {
+				snprintf(full_command + index, total_size - index, "%s ", argv[i+1]);
+				index += size + 1;
+			} else {
+				snprintf(full_command + index, total_size - index, "%s", argv[i+1]);
+				index += size;
+			}			
+		}
+
+		printf("Executing: %s\n", full_command);
+		int res = system(full_command);
+		if(res) {
+			printf("Error: %d\n", res);
+			exit(res);
+		}
+
+		free(full_command);
+	}
+
+	exit(0);
+
+
 
 	TEEC_Result res;
 	TEEC_Context ctx;
