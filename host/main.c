@@ -511,6 +511,27 @@ int main(int argc, char *argv[])
 		}
 
 		pid = strtoul(argv[2], NULL, 10);
+		if(pid < 0) {
+			printf("Invalid pid\n");
+			exit(-1);
+		}
+
+		char command[] = "./criu.sh migrate -t  -D check --shell-job -v0";
+
+		int total_size = strlen(command) + strlen(argv[2]) + 1;
+		char * full_command = malloc(total_size);
+		snprintf(full_command, total_size, "./criu.sh migrate -t %s -D check --shell-job -v0", argv[2]);
+
+		printf("The new command is: %s\n", full_command);
+
+		int res = system(full_command);
+		if(res) {
+			printf("Error: %d\n", res);
+			exit(res);
+		}
+
+		free(full_command);
+
 	} else if (!strcmp(argv[1], "-p")) {
 		if(argc < 3) {
 			printf("Missing process id\n");
@@ -524,11 +545,11 @@ int main(int argc, char *argv[])
 			exit(-1);
 		}
 
-		char command[] = "./criu.sh dump -t  -D check --shell-job";
+		char command[] = "./criu.sh dump -t  -D check --shell-job -v0";
 
 		int total_size = strlen(command) + strlen(argv[2]) + 1;
 		char * full_command = malloc(total_size);
-		snprintf(full_command, total_size, "./criu.sh dump -t %s -D check --shell-job", argv[2]);
+		snprintf(full_command, total_size, "./criu.sh dump -t %s -D check --shell-job -v0", argv[2]);
 
 		printf("The new command is: %s\n", full_command);
 
@@ -540,7 +561,7 @@ int main(int argc, char *argv[])
 
 		free(full_command);
 	} else {
-		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -- ";
+		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -v0 -- ";
 
 		//  All of this just to determine the full size of the final string
 		int arguments = argc - 1;
@@ -609,6 +630,7 @@ int main(int argc, char *argv[])
 	}
 
 	bool stop_execution = false;
+	bool migrate_back = false;
 
 	while(!stop_execution) {
 		system("cp check/pages-1.img pages-1.img");
@@ -757,7 +779,7 @@ int main(int argc, char *argv[])
 		* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be
 		* called.
 		*/
-		printf("\nLoading & executing checkpoint\n");
+		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
 		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op,
 					&err_origin);
 		if (res != TEEC_SUCCESS)
@@ -779,9 +801,10 @@ int main(int argc, char *argv[])
 				case CRIU_SYSCALL_UNSUPPORTED:
 					printf("unsupported system call.\n");
 					break;
-				case CRIU_MIGRATE_BACK:
+				case CRIU_SYSCALL_MIGRATE_BACK:
 					// TODO: stop execution but restore normal execution with criu.
 					stop_execution = true;
+					migrate_back = true;
 					printf("Secure world wants to migrate back.\n");
 					break;
 				default:
@@ -803,7 +826,7 @@ int main(int argc, char *argv[])
 			}
 		} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
 				checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
-				checkpoint.result != CRIU_MIGRATE_BACK);
+				checkpoint.result != CRIU_SYSCALL_MIGRATE_BACK);
 		
 		// printf("\nCheckpointing data back\n");
 		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
@@ -885,6 +908,10 @@ int main(int argc, char *argv[])
 			printf("Going to execute criu.sh\n");
 			system("./criu.sh execute -D check --shell-job -v0");
 		}
+	}
+
+	if(migrate_back) {
+		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
 	}
 
 	// Check if it is actually used.. otherwise we are freeing a non-malloced entry..
