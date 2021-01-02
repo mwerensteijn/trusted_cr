@@ -113,49 +113,7 @@ int main(int argc, char *argv[])
 			criu_dump(pid);
 		}
 	} else if(mode == START_MIGRATED) {
-		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -v0 -- ";
-
-		//  All of this just to determine the full size of the final string
-		int arguments = argc - 1;
-		int total_size = strlen(command) + 1; // +1 for the 0-terminator
-		for(int i = 0; i < arguments; i++) {
-			total_size += strlen(argv[i+1]);
-
- 			// Because we need a space between the arguments
-			if((i+1) != arguments)
-				total_size += 1;
-		}
-
-		// We can now allocate the full command.
-		char * full_command = malloc(total_size);
-
-		// Copy over the first part of the command "./criu.sh start -D check --shell-job --exec-cmd -- " 
-		int index = 0;
-		int size = strlen(command);
-		memcpy(full_command, command, size);
-		index += size;
-
-		// Now append the rest of the arguments after the first part of the command
-		for(int i = 0; i < arguments; i++) {
-			size = strlen(argv[i+1]);
-
-			if((i+1) != arguments) {
-				snprintf(full_command + index, total_size - index, "%s ", argv[i+1]);
-				index += size + 1;
-			} else {
-				snprintf(full_command + index, total_size - index, "%s", argv[i+1]);
-				index += size;
-			}			
-		}
-
-		printf("Executing: %s\n", full_command);
-		int res = system(full_command);
-		if(res) {
-			printf("Error: %d\n", res);
-			exit(res);
-		}
-
-		free(full_command);
+		criu_start_migrated(argc - 1, argv+1);
 	}
 
 	TEEC_Result res;
