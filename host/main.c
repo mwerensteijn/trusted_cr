@@ -214,6 +214,16 @@ void secure_execute(int pid) {
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
+	/* Initialize a context connecting us to the TEE */
+	res = TEEC_InitializeContext(NULL, &ctx);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
+
+	/* Open a session to the TA */
+	res = TEEC_OpenSession(&ctx, &sess, &uuid, TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx", res, err_origin);
+
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
 	struct criu_checkpoint checkpoint;
@@ -222,19 +232,6 @@ void secure_execute(int pid) {
 	bool migrate_back = false;
 
 	while(!stop_execution) {
-		/* Initialize a context connecting us to the TEE */
-		res = TEEC_InitializeContext(NULL, &ctx);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
-
-		/* Open a session to the TA */
-		res = TEEC_OpenSession(&ctx, &sess, &uuid,
-					TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx",
-				res, err_origin);
-
-
 		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
 
 		// Shared buffer 1 contains the checkpoint struct
@@ -254,14 +251,9 @@ void secure_execute(int pid) {
 			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 				res, err_origin);
 
-		/* Clear the TEEC_Operation struct */
+		// Prepare the two arguments that are passed to the secure world, which are two shared memory buffers.
 		memset(&op, 0, sizeof(op));
-
-		/*
-		* Prepare the two arguments that will be passed to the secure world, which are two shared memory buffers.
-		*/
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE,
-					TEEC_NONE, TEEC_NONE);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE, TEEC_NONE, TEEC_NONE);
 
 		op.params[0].memref.parent = &shared_memory_1;
 		op.params[0].memref.size = shared_memory_1.size;
@@ -305,11 +297,9 @@ void secure_execute(int pid) {
 
 			if(continue_execution) {
 				printf("\nContinuing execution\n");
-				res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op,
-							&err_origin);
+				res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op, &err_origin);
 				if (res != TEEC_SUCCESS) {
-					errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-						res, err_origin);
+					errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 					break;
 				}
 			} else {
@@ -320,11 +310,9 @@ void secure_execute(int pid) {
 				checkpoint.result != CRIU_SYSCALL_MIGRATE_BACK);
 		
 		// printf("\nCheckpointing data back\n");
-		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op,
-					&err_origin);
+		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx",
-				res, err_origin);
+			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 		// printf("TA returned from secure world\n");
 
 		encode_modified_data(&checkpoint, &checkpoint_files, op.params[1].memref.parent->buffer);
@@ -339,12 +327,9 @@ void secure_execute(int pid) {
 		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES; i++) {
 			free(checkpoint_files[i].buffer);
 		}
-		
-		critserver_encode_checkpoint(pid);
 
-		// We're done with the TA, close the session and destroy the context.
-		TEEC_CloseSession(&sess);
-		TEEC_FinalizeContext(&ctx);
+		// Re-encode the updated .txt checkpoint files to .img files
+		critserver_encode_checkpoint(pid);
 
 		// Copy back the patched pages-1.img file
 		system("cp -rf modified_pages-1.img check/pages-1.img");
@@ -360,6 +345,10 @@ void secure_execute(int pid) {
 	if(migrate_back) {
 		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
 	}
+	
+	// We're done with the TA, close the session and destroy the context.
+	TEEC_CloseSession(&sess);
+	TEEC_FinalizeContext(&ctx);
 }
 
 int main(int argc, char *argv[])
