@@ -53,7 +53,7 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-#define CHECKPOINT_FILES 6 
+#define CHECKPOINT_FILES 7 
 #define CHECKPOINT_FILENAME_MAXLENGTH 100
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index);
@@ -306,6 +306,45 @@ int crit_execute(int sock, char * command, char * buffer) {
 	return valread;
 }
 
+
+
+bool decode_pid() {
+	int sock = 0; 
+    struct sockaddr_in serv_addr; 
+    char buffer[1024] = {0}; 
+	char command[100];
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+    { 
+        printf("\n Socket creation error \n"); 
+        return -1; 
+    } 
+   
+    serv_addr.sin_family = AF_INET; 
+    serv_addr.sin_port = htons(PORT); 
+       
+    // Convert IPv4 and IPv6 addresses from text to binary form 
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)  
+    { 
+        printf("\nInvalid address/ Address not supported \n"); 
+        return -1; 
+    } 
+
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+    { 
+        printf("Connection to CRIT server failed.\n");
+        printf("Is it running?\n"); 
+        return -1; 
+    } 
+	
+	snprintf(command, 100, "decode -i check/pstree.img --pretty -o pstree.txt");
+	crit_execute(sock, command, buffer);
+
+	close(sock);
+
+	return true;
+}
+
 bool decode_checkpoint(int pid) {
 	int sock = 0; 
     struct sockaddr_in serv_addr; 
@@ -417,6 +456,42 @@ void print_usage() {
 	printf("Usage: optee_app_migrator $pid\n");
 }
 
+int parse_checkpoint_pstree(struct checkpoint_file_data * checkpoint_files) {
+	char * json = checkpoint_files[PSTREE_FILE].buffer;
+	uint64_t file_size = checkpoint_files[PSTREE_FILE].file.file_size;
+
+	// Initialize the JSMN json parser
+	jsmn_parser parser;
+	jsmn_init(&parser);
+
+	// First only determine the number of tokens.
+	int items = jsmn_parse(&parser, json, file_size, NULL, 128);
+
+	jsmntok_t tokens[items];
+	
+	// Reset position in stream
+	jsmn_init(&parser);
+	int left = jsmn_parse(&parser, json, file_size, tokens, items);
+
+	// Invalid file.
+	if (items < 1 || tokens[0].type != JSMN_OBJECT) {
+		DMSG("CRIU: INVALID JSON\n");
+		return false;
+	}
+
+	for(int i = 1; i < items; i++) {
+		// Find entry with id 1 and parse the filename. This is the executable
+		if (jsoneq(json, &tokens[i], "pid") == 0) {
+			if(tokens[i+1].type == JSMN_PRIMITIVE) {
+				int pid = strtoul(json + tokens[i+1].start, NULL, 10);
+				return pid;
+			}
+		}
+	}
+
+	return -1;
+}
+
 int main(int argc, char *argv[])
 {
 	printf("OP-TEE App Migrator\n\n");
@@ -502,12 +577,27 @@ int main(int argc, char *argv[])
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
+	// To hold the checkpoint file info
+	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
+
+	if(pid == -1) {
+		decode_pid();
+		checkpoint_files[PSTREE_FILE].filename = "pstree.txt";
+		read_file(&checkpoint_files[PSTREE_FILE]);
+		pid = parse_checkpoint_pstree(&checkpoint_files);
+		printf("pid: %d\n", pid);
+		if(pid == -1) {
+			printf("Error: unable to parse the pid from pstree.img\n");
+			exit(-1);
+		}
+	}
+	
+	exit(0);
+
 	if(!decode_checkpoint(pid)) {
 		perror("Unable to decode checkpoint\n");
 	}
 
-	// To hold the checkpoint file info
-	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
 	// TODO: make it a if(true) otherwise exit
 	read_checkpoint_files(pid, checkpoint_files);
 
