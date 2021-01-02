@@ -90,9 +90,45 @@ enum RUN_MODE parse_arguments(int argc, char *argv[]) {
 	return mode;
 }
 
+int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
+	int pid = -1;
+	
+	if(mode == DUMP_MIGRATION_API || mode == DUMP_AND_MIGRATE) {
+		pid = strtoul(argv[2], NULL, 10);
+		if(pid < 0)
+			errx(1, "Invalid pid\n");
 
-int main(int argc, char *argv[])
-{
+		if(mode == DUMP_MIGRATION_API) {
+			// A binary asks to be migrated via the API
+			// We need to dump it with CRIU in a special way to exit the endless loop
+			criu_dump_migration_api(pid);
+		} else if (mode == DUMP_AND_MIGRATE) {
+			// Dump and migrate an already running binary
+			criu_dump(pid);
+		}
+	} else if(mode == START_MIGRATED) {
+		// Run a binary from the very first instruction in the secure world
+		// Skip the first argument which is ./optee_app_migrator self
+		criu_start_migrated(argc - 1, argv + 1);
+
+		// We don't know any pid yet. Parse it from pstree.img
+		// First decode pstree.img with crit
+		critserver_decode_pid();
+
+		// Now read in the readable pstree.txt 
+		struct checkpoint_file_data pstree_checkpoint_file = { .filename = "pstree.txt" };
+		read_file(&pstree_checkpoint_file);
+
+		// And parse the pid
+		pid = parse_checkpoint_pstree(&pstree_checkpoint_file);
+		
+		free(pstree_checkpoint_file.buffer);
+	}
+
+	return pid;
+}
+
+void secure_execute(int pid) {
 	TEEC_Result res;
 	TEEC_Context ctx;
 	TEEC_Session sess;
@@ -103,35 +139,7 @@ int main(int argc, char *argv[])
 
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
-	int pid = -1;
-
-	printf("OP-TEE App Migrator\n\n");
-
-	enum RUN_MODE mode = parse_arguments(argc, argv);
-
-	if(mode == DUMP_MIGRATION_API || mode == DUMP_AND_MIGRATE) {
-		pid = strtoul(argv[2], NULL, 10);
-		if(pid < 0)
-			errx(1, "Invalid pid\n");
-
-		if(mode == DUMP_MIGRATION_API) {
-			criu_dump_migration_api(pid);
-		} else if (mode == DUMP_AND_MIGRATE) {
-			criu_dump(pid);
-		}
-	} else if(mode == START_MIGRATED) {
-		// Skip the first argument which is ./optee_app_migrator self
-		criu_start_migrated(argc - 1, argv + 1);
-
-		critserver_decode_pid();
-		checkpoint_files[PSTREE_FILE].filename = "pstree.txt";
-		read_file(&checkpoint_files[PSTREE_FILE]);
-		pid = parse_checkpoint_pstree(&checkpoint_files);
-	}
-
-	if(pid == -1)
-		errx(1, "Error: pid is %d\n", pid);
-
+	
 	bool stop_execution = false;
 	bool migrate_back = false;
 
@@ -416,12 +424,22 @@ int main(int argc, char *argv[])
 	if(migrate_back) {
 		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
 	}
+}
 
-	// Check if it is actually used.. otherwise we are freeing a non-malloced entry..
-	// Do this in a pretty way.
-	free(checkpoint_files[PSTREE_FILE].buffer);
+int main(int argc, char *argv[])
+{
+	printf("OP-TEE App Migrator\n\n");
 
-	// Close connection to the critserver
+	enum RUN_MODE mode = parse_arguments(argc, argv);
+
+	int pid = parse_pid(mode, argc, argv);
+
+	if(pid == -1)
+		errx(1, "Error: pid is %d\n", pid);
+
+	secure_execute(pid);
+
+	// Close connection to critserver if it is open
 	critserver_disconnect();
 
 	return 0;
