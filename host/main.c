@@ -519,6 +519,26 @@ int main(int argc, char *argv[])
 		}
 
 		pid = strtoul(argv[2], NULL, 10);
+		if(pid < 0) {
+			printf("Invalid pid\n");
+			exit(-1);
+		}
+
+		char command[] = "./criu.sh dump -t  -D check --shell-job";
+
+		int total_size = strlen(command) + strlen(argv[2]) + 1;
+		char * full_command = malloc(total_size);
+		snprintf(full_command, total_size, "./criu.sh dump -t %s -D check --shell-job", argv[2]);
+
+		printf("The new command is: %s\n", full_command);
+
+		int res = system(full_command);
+		if(res) {
+			printf("Error: %d\n", res);
+			exit(res);
+		}
+
+		free(full_command);
 	} else {
 		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -- ";
 
