@@ -102,33 +102,16 @@ int main(int argc, char *argv[])
 
 	int pid = -1;
 
-
-	if(mode == DUMP_MIGRATION_API) {
+	if(mode == DUMP_MIGRATION_API || mode == DUMP_AND_MIGRATE) {
 		pid = strtoul(argv[2], NULL, 10);
 		if(pid < 0)
 			errx(1, "Invalid pid\n");
 
-		criu_dump_migration_api(pid);
-	} else if (mode == DUMP_AND_MIGRATE) {
-		pid = strtoul(argv[2], NULL, 10);
-		if(pid < 0)
-			errx(1, "Invalid pid\n");
-
-		char command[] = "./criu.sh dump -t  -D check --shell-job -v0";
-
-		int total_size = strlen(command) + strlen(argv[2]) + 1;
-		char * full_command = malloc(total_size);
-		snprintf(full_command, total_size, "./criu.sh dump -t %s -D check --shell-job -v0", argv[2]);
-
-		printf("The new command is: %s\n", full_command);
-
-		int res = system(full_command);
-		if(res) {
-			printf("Error: %d\n", res);
-			exit(res);
+		if(mode == DUMP_MIGRATION_API) {
+			criu_dump_migration_api(pid);
+		} else if (mode == DUMP_AND_MIGRATE) {
+			criu_dump(pid);
 		}
-
-		free(full_command);
 	} else if(mode == START_MIGRATED) {
 		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -v0 -- ";
 
