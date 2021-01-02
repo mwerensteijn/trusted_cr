@@ -38,6 +38,7 @@
 #include "jsmn.h"
 #include "crit.h"
 #include "encoding.h"
+#include "decoding.h"
 #include "file_handling.h"
 #include "criu.h"
 
@@ -128,141 +129,124 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 	return pid;
 }
 
+void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1) {
+	long shared_buffer_1_index = 0;
+	int  shared_buffer_1_size  = sizeof(struct criu_checkpoint) 
+							   + checkpoint->vm_area_count * sizeof(struct criu_vm_area)
+							   + checkpoint->pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	// printf("Shared buffer 1 is %d bytes big\n", shared_buffer_1_size);
+
+	// Allocate space for shared buffer 1
+	*shared_buffer_1 = malloc(shared_buffer_1_size);
+	if(*shared_buffer_1 == NULL)
+		errx(1, "Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
+		
+
+	// Copy the checkpoint struct with the registers
+	int size = sizeof(struct criu_checkpoint);
+	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint, size);
+	shared_buffer_1_index += size;
+	
+	// Copy over the vm areas
+	size = checkpoint->vm_area_count * sizeof(struct criu_vm_area);
+	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint->vm_areas, size);
+	shared_buffer_1_index += size;
+
+	// Copy over the pagemap entries
+	size = checkpoint->pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint->pagemap_entries, size);
+	shared_buffer_1_index += size;
+
+	// Setup shared memory buffer 1
+	shared_memory_1->size = shared_buffer_1_size;
+	shared_memory_1->flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_1->buffer = *shared_buffer_1;
+}
+
+void prepare_shared_buffer_2(struct checkpoint_file_data * checkpoint_files, void ** shared_buffer_2, TEEC_SharedMemory * shared_memory_2) {
+	int  shared_buffer_2_index = 0;
+	long shared_buffer_2_size  = 2 * sizeof(struct checkpoint_file) 
+								+ checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size
+								+ checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	// printf("Shared buffer 2 is %d bytes big\n", shared_buffer_2_size);
+
+	*shared_buffer_2 = malloc(shared_buffer_2_size);
+	if(*shared_buffer_2 == NULL)
+		errx(1, "Unable to allocate %d bytes for shared buffer 2.", shared_buffer_2_size);
+	
+	struct checkpoint_file * binary_data = *shared_buffer_2;
+	// Store the executable file descriptor
+	binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
+	binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
+
+	// Store the pagedata descriptor
+	binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
+	binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
+												+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
+	shared_buffer_2_index += sizeof(struct checkpoint_file);
+
+	// Store the executable
+	int size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
+	memcpy(*shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+
+	// Store the pagedata
+	size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
+	memcpy(*shared_buffer_2 + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer, size);
+	shared_buffer_2_index += size;
+
+	// Setup shared memory buffer 2
+	shared_memory_2->size = shared_buffer_2_size;
+	shared_memory_2->flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shared_memory_2->buffer = *shared_buffer_2;
+}
+
 void secure_execute(int pid) {
 	TEEC_Result res;
 	TEEC_Context ctx;
 	TEEC_Session sess;
 	TEEC_Operation op;
 	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+	void * shared_buffer_1, * shared_buffer_2;
 	TEEC_UUID uuid = PTA_CRIU_UUID;
 	uint32_t err_origin;
 
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
+	struct criu_checkpoint checkpoint;
 	
 	bool stop_execution = false;
 	bool migrate_back = false;
 
 	while(!stop_execution) {
-		system("cp check/pages-1.img pages-1.img");
-
-		if(!critserver_decode_checkpoint(pid)) {
-			perror("Unable to decode checkpoint\n");
-		}
-
-		// TODO: make it a if(true) otherwise exit
-		read_checkpoint_files(pid, checkpoint_files);
-
-		struct criu_checkpoint checkpoint;
-
-		if(!parse_checkpoint_core(&checkpoint, &checkpoint_files)) {
-			perror("Unable to parse core-file.\n");
-		}
-
-		if(!parse_checkpoint_mm(&checkpoint, &checkpoint_files)) {
-			perror("Unable to parse mm-file.\n");
-		}
-
-		if(!parse_checkpoint_pagemap(&checkpoint, &checkpoint_files)) {
-			perror("Unable to parse pagemap-file.\n");
-		}
-
-		if(!parse_executable_name(&checkpoint_files)) {
-			perror("Unable the parse the executable name from files.img.\n");
-		}
-
-		// Now that we have parsed the executable filename from the checkpoint file, we can load it.
-		read_file(&checkpoint_files[EXECUTABLE_BINARY_FILE]);
-
-		int shared_buffer_1_size = sizeof(struct criu_checkpoint) 
-									+ checkpoint.vm_area_count * sizeof(struct criu_vm_area)
-									+ checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
-		
-		// printf("Total checkpoint size to migrate is %d bytes\n", shared_buffer_1_size);
-		// Allocate space for shared buffer 1
-		void * shared_buffer_1 = malloc(shared_buffer_1_size);
-		long   shared_buffer_1_index = 0;
-		if(shared_buffer_1 == NULL) {
-			printf("Unable to allocate %d bytes for shared buffer 1.", shared_buffer_1_size);
-			return -1;
-		}
-
-		// printf("Loading checkpoint files into the buffer... ");
-
-		// Copy the checkpoint struct with the registers
-		int size = sizeof(struct criu_checkpoint);
-		memcpy(shared_buffer_1 + shared_buffer_1_index, &checkpoint, size);
-		shared_buffer_1_index += size;
-		
-		// Copy over the vm areas
-		size = checkpoint.vm_area_count * sizeof(struct criu_vm_area);
-		memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.vm_areas, size);
-		shared_buffer_1_index += size;
-
-		// Copy over the pagemap entries
-		size = checkpoint.pagemap_entry_count * sizeof(struct criu_pagemap_entry);
-		memcpy(shared_buffer_1 + shared_buffer_1_index, checkpoint.pagemap_entries, size);
-		shared_buffer_1_index += size;
-
-		// printf("done!\n");
-
-		// Setup the structs that will go into shared buffer 2
-		long shared_buffer_2_size = 2 * sizeof(struct checkpoint_file) 
-										+ checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size
-										+ checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-		void * shared_buffer_2 = malloc(shared_buffer_2_size);
-		int shared_buffer_2_index = 0;
-		
-		struct checkpoint_file * binary_data = shared_buffer_2;
-		// Store the executable file descriptor
-		binary_data[EXECUTABLE_BINARY_FILE].file_type = (enum checkpoint_file_types) EXECUTABLE_BINARY_FILE;
-		binary_data[EXECUTABLE_BINARY_FILE].file_size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
-		binary_data[EXECUTABLE_BINARY_FILE].buffer_index = 2 * sizeof(struct checkpoint_file);
-		shared_buffer_2_index += sizeof(struct checkpoint_file);
-		// Store the pagedata descriptor
-		binary_data[PAGES_BINARY_FILE].file_type = (enum checkpoint_file_types) PAGES_BINARY_FILE;
-		binary_data[PAGES_BINARY_FILE].file_size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-		binary_data[PAGES_BINARY_FILE].buffer_index = binary_data[EXECUTABLE_BINARY_FILE].buffer_index
-													+ binary_data[EXECUTABLE_BINARY_FILE].file_size;
-		shared_buffer_2_index += sizeof(struct checkpoint_file);
-
-		// Store the executable
-		size = checkpoint_files[EXECUTABLE_BINARY_FILE].file.file_size;
-		memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[EXECUTABLE_BINARY_FILE].buffer, size);
-		shared_buffer_2_index += size;
-		// Store the pagedata
-		size = checkpoint_files[PAGES_BINARY_FILE].file.file_size;
-		memcpy(shared_buffer_2 + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer, size);
-		shared_buffer_2_index += size;
-		
 		/* Initialize a context connecting us to the TEE */
 		res = TEEC_InitializeContext(NULL, &ctx);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
 
-		/*
-		* Open a session to the TA
-		*/
+		/* Open a session to the TA */
 		res = TEEC_OpenSession(&ctx, &sess, &uuid,
 					TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx",
 				res, err_origin);
 
-		// Setup shared memory buffer 1
-		shared_memory_1.size = shared_buffer_1_size;
-		shared_memory_1.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-		shared_memory_1.buffer = shared_buffer_1;
 
+		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
+
+		// Shared buffer 1 contains the checkpoint struct
+		prepare_shared_buffer_1(&checkpoint, &shared_buffer_1, &shared_memory_1);
+	
 		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
 				res, err_origin);
 
-		// Setup shared memory buffer 2
-		shared_memory_2.size = shared_buffer_2_size;
-		shared_memory_2.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
-		shared_memory_2.buffer = shared_buffer_2;
+		// Shared buffer 2 contains the executable data and binary pagedata
+		prepare_shared_buffer_2(&checkpoint_files, &shared_buffer_2, &shared_memory_2);
 
 		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
 		if (res != TEEC_SUCCESS)
@@ -355,7 +339,7 @@ void secure_execute(int pid) {
 				// if(op.params[1].memref.size > sizeof(struct checkpoint_file));
 
 
-		shared_buffer_2_index = 0;
+		int shared_buffer_2_index = 0;
 		memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer, sizeof(struct criu_checkpoint_regs));
 		shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
 
@@ -382,12 +366,11 @@ void secure_execute(int pid) {
 
 		write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, op.params[1].memref.parent->buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
 
-
 		// // Give the memory back
 		TEEC_ReleaseSharedMemory(&shared_memory_1);
 		TEEC_ReleaseSharedMemory(&shared_memory_2);
-
 		free(shared_buffer_1);
+		free(shared_buffer_2);
 
 		// Do this better.. cleaner.. I now do -1 because PSTREE_FILE might not be allocated..
 		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES - 1; i++) {
