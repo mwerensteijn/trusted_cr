@@ -39,6 +39,7 @@
 #include "crit.h"
 #include "encoding.h"
 #include "file_handling.h"
+#include "criu.h"
 
 #include "criu/criu_checkpoint.h"
 #include "criu/criu_checkpoint_parser.h"
@@ -53,61 +54,65 @@
 #define CHECKPOINT_FILENAME_MAXLENGTH 100
 
 void print_usage() {
-	printf("Usage: optee_app_migrator $pid\n");
+	printf( "Usage:\toptee_app_migrator -p <pid>\n");
+	printf(       "\toptee_app_migrator <executable> <arguments>\n\n");
+
+	printf("Examples:\t./optee_app_migrator -p `pidof nbench`>\n");
+	printf(       "\t\t./optee_app_migrator ./nbench -CCOM.DAT\n");
 }
 
-int main(int argc, char *argv[])
-{
-	printf("OP-TEE App Migrator\n\n");
+enum RUN_MODE {
+	UNKNOWN,		
+	START_MIGRATED,		// Run a binary from the very first instruction in the secure world
+	DUMP_AND_MIGRATE,	// Dump and migrate an already running binary
+	DUMP_MIGRATION_API	// Migrate a binary that asks to be migrated via the API
+};
+
+enum RUN_MODE parse_arguments(int argc, char *argv[]) {
+	enum RUN_MODE mode;
 
 	if(argc < 2) {
 		print_usage();
 		exit(-1);
 	}
 
+	if (!strcmp(argv[1], "-p")) {
+		// Run a binary from the very first instruction in the secure world
+		mode = DUMP_AND_MIGRATE;
+	} else if(!strcmp(argv[1], "-m")) {
+		// Migrate a binary that asks to be migrated via the API
+		mode = DUMP_MIGRATION_API;
+	} else {
+		// Dump and migrate an already running binary
+		mode = START_MIGRATED;
+	}
+
+	if((mode == DUMP_MIGRATION_API || mode == DUMP_AND_MIGRATE) && argc < 3)
+		errx(1, "Missing process id\n");
+
+	return mode;
+}
+
+
+int main(int argc, char *argv[])
+{
+	printf("OP-TEE App Migrator\n\n");
+
+	enum RUN_MODE mode = parse_arguments(argc, argv);
+
 	int pid = -1;
 
-	if(!strcmp(argv[1], "-m")) {
-		if(argc < 3) {
-			printf("Missing process id\n");
-			printf("Usage: -m <pid>\n");
-			exit(-1);
-		}
 
+	if(mode == DUMP_MIGRATION_API) {
 		pid = strtoul(argv[2], NULL, 10);
-		if(pid < 0) {
-			printf("Invalid pid\n");
-			exit(-1);
-		}
+		if(pid < 0)
+			errx(1, "Invalid pid\n");
 
-		char command[] = "./criu.sh migrate -t  -D check --shell-job -v0";
-
-		int total_size = strlen(command) + strlen(argv[2]) + 1;
-		char * full_command = malloc(total_size);
-		snprintf(full_command, total_size, "./criu.sh migrate -t %s -D check --shell-job -v0", argv[2]);
-
-		printf("The new command is: %s\n", full_command);
-
-		int res = system(full_command);
-		if(res) {
-			printf("Error: %d\n", res);
-			exit(res);
-		}
-
-		free(full_command);
-
-	} else if (!strcmp(argv[1], "-p")) {
-		if(argc < 3) {
-			printf("Missing process id\n");
-			printf("Usage: -p <pid>\n");
-			exit(-1);
-		}
-
+		criu_dump_migration_api(pid);
+	} else if (mode == DUMP_AND_MIGRATE) {
 		pid = strtoul(argv[2], NULL, 10);
-		if(pid < 0) {
-			printf("Invalid pid\n");
-			exit(-1);
-		}
+		if(pid < 0)
+			errx(1, "Invalid pid\n");
 
 		char command[] = "./criu.sh dump -t  -D check --shell-job -v0";
 
@@ -124,7 +129,7 @@ int main(int argc, char *argv[])
 		}
 
 		free(full_command);
-	} else {
+	} else if(mode == START_MIGRATED) {
 		char command[] = "./criu.sh start -D check --shell-job --exec-cmd -v0 -- ";
 
 		//  All of this just to determine the full size of the final string
