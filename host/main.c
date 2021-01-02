@@ -591,6 +591,8 @@ int main(int argc, char *argv[])
 	bool stop_execution = false;
 
 	while(!stop_execution) {
+		system("cp check/pages-1.img pages-1.img");
+
 		if(!decode_checkpoint(pid)) {
 			perror("Unable to decode checkpoint\n");
 		}
@@ -830,7 +832,7 @@ int main(int argc, char *argv[])
 
 		free(shared_buffer_1);
 
-		for(int i = 0; i < CHECKPOINT_FILES; i++) {
+		for(int i = 0; i < CHECKPOINT_FILES - 1; i++) {
 			free(checkpoint_files[i].buffer);
 		}
 
@@ -852,13 +854,18 @@ int main(int argc, char *argv[])
 		TEEC_CloseSession(&sess);
 		TEEC_FinalizeContext(&ctx);
 
-		stop_execution = true;
+		// stop_execution = true;
 
 		// IF result != SYS_EXIT
 		printf("Going to execute criu.sh\n");
 		system("cp -rf modified_pages-1.img check/pages-1.img");
-		// system("./criu.sh execute -D check --shell-job -v4");
+		// Check return value of criu
+		system("./criu.sh execute -D check --shell-job -v0");
 	}
+
+	// Check if it is actually used.. otherwise we are freeing a non-malloced entry..
+	// Do this in a pretty way.
+	free(checkpoint_files[PSTREE_FILE].buffer);
 
 	return 0;
 }
