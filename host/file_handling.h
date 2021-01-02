@@ -4,8 +4,6 @@
 #include "criu/criu_checkpoint.h"
 #include "criu/criu_checkpoint_parser.h"
 
-// TODO: do this differently, it is now duplicate in main.c and in here.
-#define CHECKPOINT_FILES 7 
 #define CHECKPOINT_FILENAME_MAXLENGTH 100
 
 bool read_file(struct checkpoint_file_data * c_file) {
@@ -39,7 +37,7 @@ bool read_file(struct checkpoint_file_data * c_file) {
 }
 
 void read_checkpoint_files(int pid, struct checkpoint_file_data * files) {
-	char filenames[CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
+	char filenames[NUMBER_OF_CHECKPOINT_FILES][CHECKPOINT_FILENAME_MAXLENGTH] = {};
 
 	snprintf(filenames[CORE_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "core-%d.txt", pid);
 	snprintf(filenames[MM_FILE], CHECKPOINT_FILENAME_MAXLENGTH, "mm-%d.txt", pid);

@@ -50,9 +50,6 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
-#define CHECKPOINT_FILES 7 
-#define CHECKPOINT_FILENAME_MAXLENGTH 100
-
 void print_usage() {
 	printf( "Usage:\toptee_app_migrator -p <pid>\n");
 	printf(       "\toptee_app_migrator <executable> <arguments>\n\n");
@@ -105,13 +102,12 @@ int main(int argc, char *argv[])
 	uint32_t err_origin;
 
 	// To hold the checkpoint file info
-	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
+	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
+	int pid = -1;
 
 	printf("OP-TEE App Migrator\n\n");
 
 	enum RUN_MODE mode = parse_arguments(argc, argv);
-
-	int pid = -1;
 
 	if(mode == DUMP_MIGRATION_API || mode == DUMP_AND_MIGRATE) {
 		pid = strtoul(argv[2], NULL, 10);
@@ -386,7 +382,7 @@ int main(int argc, char *argv[])
 		free(shared_buffer_1);
 
 		// Do this better.. cleaner.. I now do -1 because PSTREE_FILE might not be allocated..
-		for(int i = 0; i < CHECKPOINT_FILES - 1; i++) {
+		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES - 1; i++) {
 			free(checkpoint_files[i].buffer);
 		}
 
