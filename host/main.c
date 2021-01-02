@@ -96,6 +96,17 @@ enum RUN_MODE parse_arguments(int argc, char *argv[]) {
 
 int main(int argc, char *argv[])
 {
+	TEEC_Result res;
+	TEEC_Context ctx;
+	TEEC_Session sess;
+	TEEC_Operation op;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+	TEEC_UUID uuid = PTA_CRIU_UUID;
+	uint32_t err_origin;
+
+	// To hold the checkpoint file info
+	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
+
 	printf("OP-TEE App Migrator\n\n");
 
 	enum RUN_MODE mode = parse_arguments(argc, argv);
@@ -113,31 +124,17 @@ int main(int argc, char *argv[])
 			criu_dump(pid);
 		}
 	} else if(mode == START_MIGRATED) {
-		criu_start_migrated(argc - 1, argv+1);
-	}
+		// Skip the first argument which is ./optee_app_migrator self
+		criu_start_migrated(argc - 1, argv + 1);
 
-	TEEC_Result res;
-	TEEC_Context ctx;
-	TEEC_Session sess;
-	TEEC_Operation op;
-	TEEC_SharedMemory shared_memory_1, shared_memory_2;
-	TEEC_UUID uuid = PTA_CRIU_UUID;
-	uint32_t err_origin;
-
-	// To hold the checkpoint file info
-	struct checkpoint_file_data checkpoint_files[CHECKPOINT_FILES] = {};
-
-	if(pid == -1) {
-		decode_pid();
+		critserver_decode_pid();
 		checkpoint_files[PSTREE_FILE].filename = "pstree.txt";
 		read_file(&checkpoint_files[PSTREE_FILE]);
 		pid = parse_checkpoint_pstree(&checkpoint_files);
-		printf("pid: %d\n", pid);
-		if(pid == -1) {
-			printf("Error: unable to parse the pid from pstree.img\n");
-			exit(-1);
-		}
 	}
+
+	if(pid == -1)
+		errx(1, "Error: pid is %d\n", pid);
 
 	bool stop_execution = false;
 	bool migrate_back = false;
@@ -145,7 +142,7 @@ int main(int argc, char *argv[])
 	while(!stop_execution) {
 		system("cp check/pages-1.img pages-1.img");
 
-		if(!decode_checkpoint(pid)) {
+		if(!critserver_decode_checkpoint(pid)) {
 			perror("Unable to decode checkpoint\n");
 		}
 
@@ -399,7 +396,7 @@ int main(int argc, char *argv[])
 			free(entry);
 		}
 		
-		encode_checkpoint(pid);
+		critserver_encode_checkpoint(pid);
 
 		// /*
 		//  * We're done with the TA, close the session and
@@ -429,7 +426,7 @@ int main(int argc, char *argv[])
 	free(checkpoint_files[PSTREE_FILE].buffer);
 
 	// Close connection to the critserver
-	disconnect_critserver();
+	critserver_disconnect();
 
 	return 0;
 }

@@ -11,7 +11,7 @@ static bool connected = false;
 static int sock = 0;
 static struct sockaddr_in serv_addr; 
 
-int crit_execute(int sock, char * command, char * buffer) {
+static int critserver_execute(int sock, char * command, char * buffer) {
     send(sock, command , strlen(command) , 0 ); 
     // printf("CRIU decode message sent: %s\n", command); 
     int valread = read( sock , buffer, 1024); 
@@ -20,7 +20,7 @@ int crit_execute(int sock, char * command, char * buffer) {
 	return valread;
 }
 
-static bool connect_critserver() {
+bool critserver_connect() {
     if(connected)
         return connected;
 
@@ -50,7 +50,7 @@ static bool connect_critserver() {
 }
 
 
-static bool disconnect_critserver() {
+bool critserver_disconnect() {
     if(!connected)
         return true;
 
@@ -60,21 +60,21 @@ static bool disconnect_critserver() {
     return connected;
 }
 
-static bool decode_pid() {
-    if(!connect_critserver())
+bool critserver_decode_pid() {
+    if(!critserver_connect())
         return false;
 
     char buffer[1024] = {0}; 
 	char command[100];
 	
 	snprintf(command, 100, "decode -i check/pstree.img --pretty -o pstree.txt");
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	return true;
 }
 
-bool decode_checkpoint(int pid) {
-    if(!connect_critserver())
+bool critserver_decode_checkpoint(int pid) {
+    if(!critserver_connect())
         return false;
 
 
@@ -82,31 +82,31 @@ bool decode_checkpoint(int pid) {
 	char command[100];
 	
 	snprintf(command, 100, "decode -i check/core-%d.img --pretty -o core-%d.txt", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	snprintf(command, 100, "decode -i check/pagemap-%d.img --pretty -o pagemap-%d.txt", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	snprintf(command, 100, "decode -i check/mm-%d.img --pretty -o mm-%d.txt", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	snprintf(command, 100, "decode -i check/files.img --pretty -o files.txt", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	return true;
 }
 
-bool encode_checkpoint(int pid) {
-    if(!connect_critserver())
+bool critserver_encode_checkpoint(int pid) {
+    if(!critserver_connect())
         return false;
 
     char buffer[1024] = {0}; 
 	char command[100];
 	snprintf(command, 100, "encode -i modified_core.txt -o check/core-%d.img", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	snprintf(command, 100, "encode -i modified_pagemap.txt -o check/pagemap-%d.img", pid, pid);
-	crit_execute(sock, command, buffer);
+	critserver_execute(sock, command, buffer);
 
 	return true;
 }
