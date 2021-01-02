@@ -482,5 +482,8 @@ int main(int argc, char *argv[])
 	// Do this in a pretty way.
 	free(checkpoint_files[PSTREE_FILE].buffer);
 
+	// Close connection to the critserver
+	disconnect_critserver();
+
 	return 0;
 }
