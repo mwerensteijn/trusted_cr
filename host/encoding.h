@@ -293,7 +293,7 @@ void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_chec
 	}
 }
 
-void encode_modified_data(struct criu_checkpoint * checkpoint, struct checkpoint_file_data * checkpoint_files, void * shared_memory_buffer) {
+void update_checkpoint_files(struct criu_checkpoint * checkpoint, struct checkpoint_file_data * checkpoint_files, void * shared_memory_buffer) {
 	int shared_buffer_2_index = 0;
 	memcpy(&checkpoint->regs, shared_memory_buffer, sizeof(struct criu_checkpoint_regs));
 	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);

@@ -51,6 +51,25 @@
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <optee_app_migrator_ta.h>
 
+enum RUN_MODE {
+	UNKNOWN,		
+	START_MIGRATED,		// Run a binary from the very first instruction in the secure world
+	DUMP_AND_MIGRATE,	// Dump and migrate an already running binary
+	DUMP_MIGRATION_API	// Migrate a binary that asks to be migrated via the API
+};
+
+enum RUN_MODE parse_arguments(int argc, char *argv[]);
+
+int parse_pid(enum RUN_MODE mode, int argc, char *argv[]);
+
+void secure_execute(int pid);
+
+void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, 
+void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1);
+
+void prepare_shared_buffer_2(struct checkpoint_file_data * checkpoint_files, 
+void ** shared_buffer_2, TEEC_SharedMemory * shared_memory_2);
+
 void print_usage() {
 	printf( "Usage:\toptee_app_migrator -p <pid>\n");
 	printf(       "\toptee_app_migrator <executable> <arguments>\n\n");
@@ -59,12 +78,24 @@ void print_usage() {
 	printf(       "\t\t./optee_app_migrator ./nbench -CCOM.DAT\n");
 }
 
-enum RUN_MODE {
-	UNKNOWN,		
-	START_MIGRATED,		// Run a binary from the very first instruction in the secure world
-	DUMP_AND_MIGRATE,	// Dump and migrate an already running binary
-	DUMP_MIGRATION_API	// Migrate a binary that asks to be migrated via the API
-};
+int main(int argc, char *argv[])
+{
+	printf("OP-TEE App Migrator\n\n");
+
+	enum RUN_MODE mode = parse_arguments(argc, argv);
+
+	int pid = parse_pid(mode, argc, argv);
+
+	if(pid == -1)
+		errx(1, "Error: pid is %d\n", pid);
+
+	secure_execute(pid);
+
+	// Close connection to critserver if it is open
+	critserver_disconnect();
+
+	return 0;
+}
 
 enum RUN_MODE parse_arguments(int argc, char *argv[]) {
 	enum RUN_MODE mode;
@@ -127,6 +158,155 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 	}
 
 	return pid;
+}
+
+void secure_execute(int pid) {
+	TEEC_Result res;
+	TEEC_Context ctx;
+	TEEC_Session sess;
+	TEEC_Operation op;
+	TEEC_SharedMemory shared_memory_1, shared_memory_2;
+	void * shared_buffer_1, * shared_buffer_2;
+	TEEC_UUID uuid = PTA_CRIU_UUID;
+	uint32_t err_origin;
+
+	/* Initialize a context connecting us to the TEE */
+	res = TEEC_InitializeContext(NULL, &ctx);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
+
+	/* Open a session to the TA */
+	res = TEEC_OpenSession(&ctx, &sess, &uuid, TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
+	if (res != TEEC_SUCCESS)
+		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx", res, err_origin);
+
+	// To hold the checkpoint file info
+	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
+	struct criu_checkpoint checkpoint;
+	
+	bool stop_execution = false;
+	bool migrate_back = false;
+
+	while(!stop_execution) {
+		// Decode all checkpoint files with CRIT and parse the checkpoint files, store it in &checkpoint.
+		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
+
+		// Fill shared buffer 1 with the checkpoint struct: registers, vma's, pagemap entries, etc.
+		prepare_shared_buffer_1(&checkpoint, &shared_buffer_1, &shared_memory_1);
+
+		// Fill shared buffer 2 with the executable data and binary pagedata
+		prepare_shared_buffer_2(&checkpoint_files, &shared_buffer_2, &shared_memory_2);
+
+		// Register the shared memory buffers
+		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
+				res, err_origin);
+
+		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
+				res, err_origin);
+
+		// Prepare the two arguments that are passed to the secure world, which are two shared memory buffers.
+		memset(&op, 0, sizeof(op));
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE, TEEC_NONE, TEEC_NONE);
+
+		op.params[0].memref.parent = &shared_memory_1;
+		op.params[0].memref.size = shared_memory_1.size;
+		op.params[0].memref.offset = 0;
+
+		op.params[1].memref.parent = &shared_memory_2;
+		op.params[1].memref.size = shared_memory_2.size;
+		op.params[1].memref.offset = 0;
+		
+		/* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be called. */
+		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
+
+		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op, &err_origin);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
+
+		do {
+			bool continue_execution = false;
+			
+			memcpy(&checkpoint.result, op.params[1].memref.parent->buffer, sizeof(enum criu_return_types));
+			memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	criu_return_types), sizeof(struct criu_checkpoint_regs));
+
+			printf("TA returned from secure world: ");
+			switch(checkpoint.result) {
+				case CRIU_SYSCALL_EXIT:
+					stop_execution = true;
+					printf("EXIT system call!\n");
+					break;
+				case CRIU_SYSCALL_UNSUPPORTED:
+					printf("unsupported system call.\n");
+					break;
+				case CRIU_SYSCALL_MIGRATE_BACK:
+					stop_execution = true;
+					migrate_back = true;
+					printf("Secure world wants to migrate back.\n");
+					break;
+				default:
+					printf("no idea what happened.\n");
+					break;
+			}
+
+			if(continue_execution) {
+				printf("\nContinuing execution\n");
+				res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op, &err_origin);
+				if (res != TEEC_SUCCESS) {
+					errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
+					break;
+				}
+			} else {
+				break;
+			}
+		} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
+				checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
+				checkpoint.result != CRIU_SYSCALL_MIGRATE_BACK);
+		
+		// Invoke command CRIU_CHECKPOINT_BACK to ask the TA to put the dirty checkpoint data in shared buffer 1.
+		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op, &err_origin);
+		if (res != TEEC_SUCCESS)
+			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
+
+		// Now parse the data in shared buffer 1 and use it to update the checkpoint files: update the registers,
+		// add dirty pagemap entries and patch the pages-1.img file.
+		update_checkpoint_files(&checkpoint, &checkpoint_files, op.params[1].memref.parent->buffer);
+
+		// Release and free all allocated memory
+		TEEC_ReleaseSharedMemory(&shared_memory_1);
+		TEEC_ReleaseSharedMemory(&shared_memory_2);
+
+		free(shared_buffer_1);
+		free(shared_buffer_2);
+
+		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES; i++) {
+			free(checkpoint_files[i].buffer);
+		}
+
+		// Re-encode the updated .txt checkpoint files to .img files
+		critserver_encode_checkpoint(pid);
+
+		// Copy back the patched pages-1.img file
+		system("cp -rf modified_pages-1.img check/pages-1.img");
+
+		if(!stop_execution) {
+			// Execute one single system call with CRIU
+			system("./criu.sh execute -D check --shell-job -v0");
+		}
+	}
+
+	if(migrate_back) {
+		// The binary has asked to migrate back to the normal world via the
+		// migration API. Now restore it with CRIU like a normal checkpoint.
+		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
+	}
+	
+	// We're done with the TA, close the session and destroy the context.
+	TEEC_CloseSession(&sess);
+	TEEC_FinalizeContext(&ctx);
 }
 
 void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1) {
@@ -202,170 +382,4 @@ void prepare_shared_buffer_2(struct checkpoint_file_data * checkpoint_files, voi
 	shared_memory_2->size = shared_buffer_2_size;
 	shared_memory_2->flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	shared_memory_2->buffer = *shared_buffer_2;
-}
-
-void secure_execute(int pid) {
-	TEEC_Result res;
-	TEEC_Context ctx;
-	TEEC_Session sess;
-	TEEC_Operation op;
-	TEEC_SharedMemory shared_memory_1, shared_memory_2;
-	void * shared_buffer_1, * shared_buffer_2;
-	TEEC_UUID uuid = PTA_CRIU_UUID;
-	uint32_t err_origin;
-
-	/* Initialize a context connecting us to the TEE */
-	res = TEEC_InitializeContext(NULL, &ctx);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_InitializeContext failed with code 0x%lx", res);
-
-	/* Open a session to the TA */
-	res = TEEC_OpenSession(&ctx, &sess, &uuid, TEEC_LOGIN_PUBLIC, NULL, NULL, &err_origin);
-	if (res != TEEC_SUCCESS)
-		errx(1, "TEEC_Opensession failed with code 0x%lx origin 0x%lx", res, err_origin);
-
-	// To hold the checkpoint file info
-	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
-	struct criu_checkpoint checkpoint;
-	
-	bool stop_execution = false;
-	bool migrate_back = false;
-
-	while(!stop_execution) {
-		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
-
-		// Shared buffer 1 contains the checkpoint struct
-		prepare_shared_buffer_1(&checkpoint, &shared_buffer_1, &shared_memory_1);
-
-		// Shared buffer 2 contains the executable data and binary pagedata
-		prepare_shared_buffer_2(&checkpoint_files, &shared_buffer_2, &shared_memory_2);
-
-		// Register shared memory buffers
-		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_1);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
-				res, err_origin);
-
-		res = TEEC_RegisterSharedMemory(&ctx, &shared_memory_2);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_AllocateSharedMemory failed with code 0x%lx origin 0x%lx",
-				res, err_origin);
-
-		// Prepare the two arguments that are passed to the secure world, which are two shared memory buffers.
-		memset(&op, 0, sizeof(op));
-		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_WHOLE, TEEC_MEMREF_WHOLE, TEEC_NONE, TEEC_NONE);
-
-		op.params[0].memref.parent = &shared_memory_1;
-		op.params[0].memref.size = shared_memory_1.size;
-		op.params[0].memref.offset = 0;
-
-		op.params[1].memref.parent = &shared_memory_2;
-		op.params[1].memref.size = shared_memory_2.size;
-		op.params[1].memref.offset = 0;
-		
-		/* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be called. */
-		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
-		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op, &err_origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
-
-		do {
-			bool continue_execution = false;
-			
-			memcpy(&checkpoint.result, op.params[1].memref.parent->buffer, sizeof(enum criu_return_types));
-			memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	criu_return_types), sizeof(struct criu_checkpoint_regs));
-
-			printf("TA returned from secure world: ");
-			switch(checkpoint.result) {
-				case CRIU_SYSCALL_EXIT:
-					stop_execution = true;
-					printf("EXIT system call!\n");
-					break;
-				case CRIU_SYSCALL_UNSUPPORTED:
-					printf("unsupported system call.\n");
-					break;
-				case CRIU_SYSCALL_MIGRATE_BACK:
-					// TODO: stop execution but restore normal execution with criu.
-					stop_execution = true;
-					migrate_back = true;
-					printf("Secure world wants to migrate back.\n");
-					break;
-				default:
-					printf("no idea what happened.\n");
-					break;
-			}
-
-			if(continue_execution) {
-				printf("\nContinuing execution\n");
-				res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op, &err_origin);
-				if (res != TEEC_SUCCESS) {
-					errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
-					break;
-				}
-			} else {
-				break;
-			}
-		} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
-				checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
-				checkpoint.result != CRIU_SYSCALL_MIGRATE_BACK);
-		
-		// printf("\nCheckpointing data back\n");
-		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op, &err_origin);
-		if (res != TEEC_SUCCESS)
-			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
-		// printf("TA returned from secure world\n");
-
-		encode_modified_data(&checkpoint, &checkpoint_files, op.params[1].memref.parent->buffer);
-
-		// Release and free all allocated memory
-		TEEC_ReleaseSharedMemory(&shared_memory_1);
-		TEEC_ReleaseSharedMemory(&shared_memory_2);
-
-		free(shared_buffer_1);
-		free(shared_buffer_2);
-
-		for(int i = 0; i < NUMBER_OF_CHECKPOINT_FILES; i++) {
-			free(checkpoint_files[i].buffer);
-		}
-
-		// Re-encode the updated .txt checkpoint files to .img files
-		critserver_encode_checkpoint(pid);
-
-		// Copy back the patched pages-1.img file
-		system("cp -rf modified_pages-1.img check/pages-1.img");
-
-		// Check return value of criu, on fail exit.
-		if(!stop_execution) {
-			// Add #ifdef DEBUG
-			// printf("Going to execute criu.sh\n");
-			system("./criu.sh execute -D check --shell-job -v0");
-		}
-	}
-
-	if(migrate_back) {
-		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
-	}
-	
-	// We're done with the TA, close the session and destroy the context.
-	TEEC_CloseSession(&sess);
-	TEEC_FinalizeContext(&ctx);
-}
-
-int main(int argc, char *argv[])
-{
-	printf("OP-TEE App Migrator\n\n");
-
-	enum RUN_MODE mode = parse_arguments(argc, argv);
-
-	int pid = parse_pid(mode, argc, argv);
-
-	if(pid == -1)
-		errx(1, "Error: pid is %d\n", pid);
-
-	secure_execute(pid);
-
-	// Close connection to critserver if it is open
-	critserver_disconnect();
-
-	return 0;
 }
