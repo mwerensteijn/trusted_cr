@@ -28,7 +28,7 @@
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>
 
-#include <optee_app_migrator_ta.h>
+#include <trusted_cr_ta.h>
 
 #include <string.h>
 

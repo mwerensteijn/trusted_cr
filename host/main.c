@@ -49,7 +49,7 @@
 #include <tee_client_api.h>
 
 /* To the the UUID (found the the TA's h-file(s)) */
-#include <optee_app_migrator_ta.h>
+#include <trusted_cr_ta.h>
 
 enum RUN_MODE {
 	UNKNOWN,		
@@ -71,16 +71,16 @@ void prepare_shared_buffer_2(struct checkpoint_file_data * checkpoint_files,
 void ** shared_buffer_2, TEEC_SharedMemory * shared_memory_2);
 
 void print_usage() {
-	printf( "Usage:\toptee_app_migrator -p <pid>\n");
-	printf(       "\toptee_app_migrator <executable> <arguments>\n\n");
+	printf( "Usage:\ttrusted_cr -p <pid>\n");
+	printf(       "\ttrusted_cr <executable> <arguments>\n\n");
 
-	printf("Examples:\t./optee_app_migrator -p `pidof nbench`>\n");
-	printf(       "\t\t./optee_app_migrator ./nbench -CCOM.DAT\n");
+	printf("Examples:\t./trusted_cr -p `pidof nbench`>\n");
+	printf(       "\t\t./trusted_cr ./nbench -CCOM.DAT\n");
 }
 
 int main(int argc, char *argv[])
 {
-	printf("OP-TEE App Migrator\n\n");
+	printf("Trusted-CR\n\n");
 
 	enum RUN_MODE mode = parse_arguments(argc, argv);
 
@@ -140,7 +140,7 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 		}
 	} else if(mode == START_MIGRATED) {
 		// Run a binary from the very first instruction in the secure world
-		// Skip the first argument which is ./optee_app_migrator self
+		// Skip the first argument which is ./trusted_cr self
 		criu_start_migrated(argc - 1, argv + 1);
 
 		// We don't know any pid yet. Parse it from pstree.img

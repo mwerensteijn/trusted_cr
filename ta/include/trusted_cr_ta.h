@@ -24,8 +24,8 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef TA_OPTEE_APP_MIGRATOR_H
-#define TA_OPTEE_APP_MIGRATOR_H
+#ifndef TA_trusted_cr_H
+#define TA_trusted_cr_H
 
 
 /*
@@ -46,4 +46,4 @@
 #define TRUSTED_CR_CHECKPOINT_BACK	1
 #define TRUSTED_CR_CONTINUE_EXECUTION	2
 
-#endif /*TA_OPTEE_APP_MIGRATOR_H*/
+#endif /*TA_trusted_cr_H*/

@@ -1,4 +1,4 @@
-project (optee_app_migrator C)
+project (trusted_cr C)
 
 set (SRC host/main.c)
 

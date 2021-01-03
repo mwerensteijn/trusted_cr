@@ -12,7 +12,7 @@ CFLAGS += -Wall -I../ta/include -I$(OPTEE_QEMU_DIR)/optee_os/core/include -I$(TE
 #Add/link other required libraries here
 LDADD += -lteec -L$(TEEC_EXPORT)/lib
 
-BINARY = optee_app_migrator
+BINARY = trusted_cr
 
 .PHONY: all
 all: $(BINARY)

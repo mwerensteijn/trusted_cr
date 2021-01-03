@@ -33,7 +33,7 @@
 #define USER_TA_HEADER_DEFINES_H
 
 /* To get the TA UUID definition */
-#include <optee_app_migrator_ta.h>
+#include <trusted_cr_ta.h>
 
 #define TA_UUID				TA_APP_MIGRATOR_UUID
 
@@ -57,10 +57,10 @@
 
 /* Extra properties */
 #define TA_CURRENT_TA_EXT_PROPERTIES \
-    { "org.linaro.optee.examples.optee_app_migrator.property1", \
+    { "org.linaro.optee.examples.trusted_cr.property1", \
 	USER_TA_PROP_TYPE_STRING, \
         "Some string" }, \
-    { "org.linaro.optee.examples.optee_app_migrator.property2", \
+    { "org.linaro.optee.examples.trusted_cr.property2", \
 	USER_TA_PROP_TYPE_U32, &(const uint32_t){ 0x0010 } }
 
 #endif /* USER_TA_HEADER_DEFINES_H */

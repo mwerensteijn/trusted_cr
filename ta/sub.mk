@@ -1,5 +1,5 @@
 global-incdirs-y += include
-srcs-y += optee_app_migrator_ta.c
+srcs-y += trusted_cr_ta.c
 
 # To remove a certain compiler flag, add a line like this
 #cflags-template_ta.c-y += -Wno-strict-prototypes
