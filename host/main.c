@@ -42,8 +42,8 @@
 #include "file_handling.h"
 #include "criu.h"
 
-#include "criu/criu_checkpoint.h"
-#include "criu/criu_checkpoint_parser.h"
+#include "trusted_cr/trusted_cr_checkpoint.h"
+#include "trusted_cr/trusted_cr_checkpoint_parser.h"
 
 /* OP-TEE TEE client API (built by optee_client) */
 #include <tee_client_api.h>
@@ -64,7 +64,7 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]);
 
 void secure_execute(int pid);
 
-void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, 
+void prepare_shared_buffer_1(struct trusted_cr_checkpoint * checkpoint, 
 void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1);
 
 void prepare_shared_buffer_2(struct checkpoint_file_data * checkpoint_files, 
@@ -167,7 +167,7 @@ void secure_execute(int pid) {
 	TEEC_Operation op;
 	TEEC_SharedMemory shared_memory_1, shared_memory_2;
 	void * shared_buffer_1, * shared_buffer_2;
-	TEEC_UUID uuid = PTA_CRIU_UUID;
+	TEEC_UUID uuid = PTA_TRUSTED_CR_UUID;
 	uint32_t err_origin;
 
 	/* Initialize a context connecting us to the TEE */
@@ -182,7 +182,7 @@ void secure_execute(int pid) {
 
 	// To hold the checkpoint file info
 	struct checkpoint_file_data checkpoint_files[NUMBER_OF_CHECKPOINT_FILES] = {};
-	struct criu_checkpoint checkpoint;
+	struct trusted_cr_checkpoint checkpoint;
 	
 	bool stop_execution = false;
 	bool migrate_back = false;
@@ -220,29 +220,29 @@ void secure_execute(int pid) {
 		op.params[1].memref.size = shared_memory_2.size;
 		op.params[1].memref.offset = 0;
 		
-		/* CRIU_LOAD_CHECKPOINT is the actual function in the TA to be called. */
+		/* TRUSTED_CR_LOAD_CHECKPOINT is the actual function in the TA to be called. */
 		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
 
-		res = TEEC_InvokeCommand(&sess, CRIU_LOAD_CHECKPOINT, &op, &err_origin);
+		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_LOAD_CHECKPOINT, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 
 		do {
 			bool continue_execution = false;
 			
-			memcpy(&checkpoint.result, op.params[1].memref.parent->buffer, sizeof(enum criu_return_types));
-			memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	criu_return_types), sizeof(struct criu_checkpoint_regs));
+			memcpy(&checkpoint.result, op.params[1].memref.parent->buffer, sizeof(enum trusted_cr_return_types));
+			memcpy(&checkpoint.regs, op.params[1].memref.parent->buffer + sizeof(enum 	trusted_cr_return_types), sizeof(struct trusted_cr_checkpoint_regs));
 
 			printf("TA returned from secure world: ");
 			switch(checkpoint.result) {
-				case CRIU_SYSCALL_EXIT:
+				case TRUSTED_CR_SYSCALL_EXIT:
 					stop_execution = true;
 					printf("EXIT system call!\n");
 					break;
-				case CRIU_SYSCALL_UNSUPPORTED:
+				case TRUSTED_CR_SYSCALL_UNSUPPORTED:
 					printf("unsupported system call.\n");
 					break;
-				case CRIU_SYSCALL_MIGRATE_BACK:
+				case TRUSTED_CR_SYSCALL_MIGRATE_BACK:
 					stop_execution = true;
 					migrate_back = true;
 					printf("Secure world wants to migrate back.\n");
@@ -254,7 +254,7 @@ void secure_execute(int pid) {
 
 			if(continue_execution) {
 				printf("\nContinuing execution\n");
-				res = TEEC_InvokeCommand(&sess, CRIU_CONTINUE_EXECUTION, &op, &err_origin);
+				res = TEEC_InvokeCommand(&sess, TRUSTED_CR_CONTINUE_EXECUTION, &op, &err_origin);
 				if (res != TEEC_SUCCESS) {
 					errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 					break;
@@ -262,12 +262,12 @@ void secure_execute(int pid) {
 			} else {
 				break;
 			}
-		} while(checkpoint.result != CRIU_SYSCALL_EXIT &&
-				checkpoint.result != CRIU_SYSCALL_UNSUPPORTED &&
-				checkpoint.result != CRIU_SYSCALL_MIGRATE_BACK);
+		} while(checkpoint.result != TRUSTED_CR_SYSCALL_EXIT &&
+				checkpoint.result != TRUSTED_CR_SYSCALL_UNSUPPORTED &&
+				checkpoint.result != TRUSTED_CR_SYSCALL_MIGRATE_BACK);
 		
-		// Invoke command CRIU_CHECKPOINT_BACK to ask the TA to put the dirty checkpoint data in shared buffer 1.
-		res = TEEC_InvokeCommand(&sess, CRIU_CHECKPOINT_BACK, &op, &err_origin);
+		// Invoke command TRUSTED_CR_CHECKPOINT_BACK to ask the TA to put the dirty checkpoint data in shared buffer 1.
+		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_CHECKPOINT_BACK, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 
@@ -309,11 +309,11 @@ void secure_execute(int pid) {
 	TEEC_FinalizeContext(&ctx);
 }
 
-void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1) {
+void prepare_shared_buffer_1(struct trusted_cr_checkpoint * checkpoint, void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1) {
 	long shared_buffer_1_index = 0;
-	int  shared_buffer_1_size  = sizeof(struct criu_checkpoint) 
-							   + checkpoint->vm_area_count * sizeof(struct criu_vm_area)
-							   + checkpoint->pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	int  shared_buffer_1_size  = sizeof(struct trusted_cr_checkpoint) 
+							   + checkpoint->vm_area_count * sizeof(struct trusted_cr_vm_area)
+							   + checkpoint->pagemap_entry_count * sizeof(struct trusted_cr_pagemap_entry);
 	// printf("Shared buffer 1 is %d bytes big\n", shared_buffer_1_size);
 
 	// Allocate space for shared buffer 1
@@ -323,17 +323,17 @@ void prepare_shared_buffer_1(struct criu_checkpoint * checkpoint, void ** shared
 		
 
 	// Copy the checkpoint struct with the registers
-	int size = sizeof(struct criu_checkpoint);
+	int size = sizeof(struct trusted_cr_checkpoint);
 	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint, size);
 	shared_buffer_1_index += size;
 	
 	// Copy over the vm areas
-	size = checkpoint->vm_area_count * sizeof(struct criu_vm_area);
+	size = checkpoint->vm_area_count * sizeof(struct trusted_cr_vm_area);
 	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint->vm_areas, size);
 	shared_buffer_1_index += size;
 
 	// Copy over the pagemap entries
-	size = checkpoint->pagemap_entry_count * sizeof(struct criu_pagemap_entry);
+	size = checkpoint->pagemap_entry_count * sizeof(struct trusted_cr_pagemap_entry);
 	memcpy(*shared_buffer_1 + shared_buffer_1_index, checkpoint->pagemap_entries, size);
 	shared_buffer_1_index += size;
 

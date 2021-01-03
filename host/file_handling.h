@@ -1,8 +1,8 @@
 #ifndef FILE_HANDLING_H
 #define FILE_HANDLING_H
 
-#include "criu/criu_checkpoint.h"
-#include "criu/criu_checkpoint_parser.h"
+#include "trusted_cr/trusted_cr_checkpoint.h"
+#include "trusted_cr/trusted_cr_checkpoint_parser.h"
 
 #define CHECKPOINT_FILENAME_MAXLENGTH 100
 

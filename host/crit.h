@@ -13,7 +13,7 @@ static struct sockaddr_in serv_addr;
 
 static int critserver_execute(int sock, char * command, char * buffer) {
     send(sock, command , strlen(command) , 0 ); 
-    // printf("CRIU decode message sent: %s\n", command); 
+    // printf("CRIT command sent: %s\n", command); 
     int valread = read( sock , buffer, 1024); 
 	buffer[valread] = '\0';
     // printf("%s\n",buffer ); 

@@ -1,8 +1,8 @@
 #ifndef ENCODING_H
 #define ENCODING_H
 
-#include "criu/criu_checkpoint.h"
-#include "criu/criu_checkpoint_parser.h"
+#include "trusted_cr/trusted_cr_checkpoint.h"
+#include "trusted_cr/trusted_cr_checkpoint_parser.h"
 
 void fprintf_substring(FILE * file, char * buffer, int start_index, int end_index) {
 	char backup = buffer[end_index];
@@ -11,7 +11,7 @@ void fprintf_substring(FILE * file, char * buffer, int start_index, int end_inde
 	buffer[end_index] = backup;	
 }
 
-void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct criu_checkpoint * checkpoint) {
+void write_updated_core_checkpoint(char * new_filename, void * buffer, long file_size, struct trusted_cr_checkpoint * checkpoint) {
 	FILE *fpp = fopen(new_filename, "w+");
 	if(fpp) {
 		// Initialize the JSMN json parser
@@ -146,10 +146,10 @@ void write_updated_core_checkpoint(char * new_filename, void * buffer, long file
 	}
 }
 
-void write_updated_pages_checkpoint(struct criu_merged_pagemap * merged_map, struct criu_dirty_page * dirty_page, int dirty_page_count, void * page_data, char * original_buffer) {
+void write_updated_pages_checkpoint(struct trusted_cr_merged_pagemap * merged_map, struct trusted_cr_dirty_page * dirty_page, int dirty_page_count, void * page_data, char * original_buffer) {
 	FILE *fpages = fopen("modified_pages-1.img", "w+");
 	if(fpages) {
-		struct criu_merged_page * entry = NULL;
+		struct trusted_cr_merged_page * entry = NULL;
 		TAILQ_FOREACH(entry, merged_map, link) {
 			for(int i = 0; i < entry->entry.nr_pages; i++) {
 				vaddr_t addr = entry->entry.vaddr_start + i * 4096;
@@ -179,7 +179,7 @@ void write_updated_pages_checkpoint(struct criu_merged_pagemap * merged_map, str
 	}
 }
 
-void write_updated_pagemap_checkpoint(struct criu_merged_pagemap * merged_pagemap, char * buffer, long file_size) {
+void write_updated_pagemap_checkpoint(struct trusted_cr_merged_pagemap * merged_pagemap, char * buffer, long file_size) {
 	FILE *fpagemap = fopen("modified_pagemap.txt", "w+");
 
 	if(fpagemap) {
@@ -218,7 +218,7 @@ void write_updated_pagemap_checkpoint(struct criu_merged_pagemap * merged_pagema
 		fprintf(fpagemap, "%s", buffer);
 		buffer[vaddr_start] = backup;	
 
-		struct criu_merged_page * entry = NULL;
+		struct trusted_cr_merged_page * entry = NULL;
 		TAILQ_FOREACH(entry, merged_pagemap, link) {
 			fprintf(fpagemap, "{\n\t\"vaddr\": \"0x%lx\",\n\t\"nr_pages\": %d,\n\t\"flags\": \"", entry->entry.vaddr_start, entry->entry.nr_pages);
 			
@@ -250,12 +250,12 @@ void write_updated_pagemap_checkpoint(struct criu_merged_pagemap * merged_pagema
 }
 
 
-void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_checkpoint * checkpoint, 
-					   struct criu_dirty_page * dirty_entry, int dirty_page_count) {
+void create_merged_map(struct trusted_cr_merged_pagemap * merged_map, struct trusted_cr_checkpoint * checkpoint, 
+					   struct trusted_cr_dirty_page * dirty_entry, int dirty_page_count) {
 	for(int i = 0; i < checkpoint->pagemap_entry_count; i++) {
-		struct criu_merged_page * new_entry = calloc(1, sizeof(struct criu_merged_page));
+		struct trusted_cr_merged_page * new_entry = calloc(1, sizeof(struct trusted_cr_merged_page));
 		new_entry->is_new = false;
-		memcpy(&new_entry->entry, &checkpoint->pagemap_entries[i], sizeof(struct criu_pagemap_entry));
+		memcpy(&new_entry->entry, &checkpoint->pagemap_entries[i], sizeof(struct trusted_cr_pagemap_entry));
 
 		TAILQ_INSERT_TAIL(merged_map, new_entry, link);
 	}
@@ -263,7 +263,7 @@ void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_chec
 	for(int i = 0; i < dirty_page_count; i++) {
 		bool skip = false;
 		bool insert_before = false;
-		struct criu_merged_page * entry = NULL;
+		struct trusted_cr_merged_page * entry = NULL;
 		TAILQ_FOREACH(entry, merged_map, link) {
 			if((entry->entry.vaddr_start <= dirty_entry[i].vaddr_start)  &&
 			(dirty_entry[i].vaddr_start < (entry->entry.vaddr_start + entry->entry.nr_pages * 4096))) {
@@ -278,7 +278,7 @@ void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_chec
 		if(skip)
 			continue;
 
-		struct criu_merged_page * new_entry = calloc(1, sizeof(struct criu_merged_page));
+		struct trusted_cr_merged_page * new_entry = calloc(1, sizeof(struct trusted_cr_merged_page));
 		
 		new_entry->entry.vaddr_start = dirty_entry[i].vaddr_start;
 		new_entry->entry.nr_pages = 1;
@@ -293,23 +293,23 @@ void create_merged_map(struct criu_merged_pagemap * merged_map, struct criu_chec
 	}
 }
 
-void update_checkpoint_files(struct criu_checkpoint * checkpoint, struct checkpoint_file_data * checkpoint_files, void * shared_memory_buffer) {
+void update_checkpoint_files(struct trusted_cr_checkpoint * checkpoint, struct checkpoint_file_data * checkpoint_files, void * shared_memory_buffer) {
 	int shared_buffer_2_index = 0;
-	memcpy(&checkpoint->regs, shared_memory_buffer, sizeof(struct criu_checkpoint_regs));
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_regs);
+	memcpy(&checkpoint->regs, shared_memory_buffer, sizeof(struct trusted_cr_checkpoint_regs));
+	shared_buffer_2_index += sizeof(struct trusted_cr_checkpoint_regs);
 
-	struct criu_checkpoint_dirty_pages * dirty_pages_info = shared_memory_buffer + shared_buffer_2_index;
-	shared_buffer_2_index += sizeof(struct criu_checkpoint_dirty_pages);
+	struct trusted_cr_checkpoint_dirty_pages * dirty_pages_info = shared_memory_buffer + shared_buffer_2_index;
+	shared_buffer_2_index += sizeof(struct trusted_cr_checkpoint_dirty_pages);
 
-	struct criu_dirty_page * dirty_entry = shared_memory_buffer + shared_buffer_2_index;
-	shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct criu_dirty_page);
+	struct trusted_cr_dirty_page * dirty_entry = shared_memory_buffer + shared_buffer_2_index;
+	shared_buffer_2_index += dirty_pages_info->dirty_page_count * sizeof(struct trusted_cr_dirty_page);
 
-	struct criu_merged_pagemap merged_map;
+	struct trusted_cr_merged_pagemap merged_map;
 	TAILQ_INIT(&merged_map);
 
 	create_merged_map(&merged_map, checkpoint, dirty_entry, dirty_pages_info->dirty_page_count);
 
-	// struct criu_merged_page * e = NULL;
+	// struct trusted_cr_merged_page * e = NULL;
 	// TAILQ_FOREACH(e, &merged_map, link) {
 	// 	printf("[%d] entry: %p - nr pages: %d\n", e->is_new, e->entry.vaddr_start, e->entry.nr_pages);
 	// }
@@ -320,8 +320,8 @@ void update_checkpoint_files(struct criu_checkpoint * checkpoint, struct checkpo
 
 	write_updated_pages_checkpoint(&merged_map, dirty_entry, dirty_pages_info->dirty_page_count, shared_memory_buffer + shared_buffer_2_index, checkpoint_files[PAGES_BINARY_FILE].buffer);
 
-	// Free all allocated criu_pagemap_entry structs
-	struct criu_merged_page * entry = NULL;
+	// Free all allocated trusted_cr_pagemap_entry structs
+	struct trusted_cr_merged_page * entry = NULL;
 	TAILQ_FOREACH(entry, &merged_map, link) {
 		free(entry);
 	}

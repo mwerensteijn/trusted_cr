@@ -7,10 +7,10 @@
 #include "crit.h"
 #include "file_handling.h"
 
-#include "criu/criu_checkpoint.h"
-#include "criu/criu_checkpoint_parser.h"
+#include "trusted_cr/trusted_cr_checkpoint.h"
+#include "trusted_cr/trusted_cr_checkpoint_parser.h"
 
-void parse_checkpoint_files(int pid, struct checkpoint_file_data * checkpoint_files, struct criu_checkpoint * checkpoint) {
+void parse_checkpoint_files(int pid, struct checkpoint_file_data * checkpoint_files, struct trusted_cr_checkpoint * checkpoint) {
 	// Copy over pages-1.img
 	system("cp check/pages-1.img pages-1.img");
 

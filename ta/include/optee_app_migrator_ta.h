@@ -36,14 +36,14 @@
 	{ 0x523474a5, 0x8c4a, 0x438c, \
 		{ 0x81, 0x20, 0x70, 0xf3, 0xd7, 0xbf, 0x0e, 0xd0} }
 
-#define PTA_CRIU_UUID \
+#define PTA_TRUSTED_CR_UUID \
 { 0xd96a5b40, 0xe2c7, 0xb1af, \
 	{ 0x87, 0x94, 0x10, 0x02, 0xa5, 0xd5, 0xc6, 0x1c } }
 		
 
 /* The function IDs implemented in this TA */
-#define CRIU_LOAD_CHECKPOINT	0
-#define CRIU_CHECKPOINT_BACK	1
-#define CRIU_CONTINUE_EXECUTION	2
+#define TRUSTED_CR_LOAD_CHECKPOINT	0
+#define TRUSTED_CR_CHECKPOINT_BACK	1
+#define TRUSTED_CR_CONTINUE_EXECUTION	2
 
 #endif /*TA_OPTEE_APP_MIGRATOR_H*/
