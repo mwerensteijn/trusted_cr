@@ -42,8 +42,8 @@
 		
 
 /* The function IDs implemented in this TA */
-#define TRUSTED_CR_LOAD_CHECKPOINT	0
-#define TRUSTED_CR_CHECKPOINT_BACK	1
+#define TRUSTED_CR_EXECUTE_CHECKPOINT	0
+#define TRUSTED_CR_CHECKPOINT_BACK		1
 #define TRUSTED_CR_CONTINUE_EXECUTION	2
 
 #endif /*TA_trusted_cr_H*/

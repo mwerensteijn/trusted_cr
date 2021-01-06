@@ -220,10 +220,10 @@ void secure_execute(int pid) {
 		op.params[1].memref.size = shared_memory_2.size;
 		op.params[1].memref.offset = 0;
 		
-		/* TRUSTED_CR_LOAD_CHECKPOINT is the actual function in the TA to be called. */
+		/* TRUSTED_CR_EXECUTE_CHECKPOINT is the actual function in the TA to be called. */
 		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
 
-		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_LOAD_CHECKPOINT, &op, &err_origin);
+		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_EXECUTE_CHECKPOINT, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 

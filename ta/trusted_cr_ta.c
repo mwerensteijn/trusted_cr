@@ -132,7 +132,7 @@ TEE_Result TA_InvokeCommandEntryPoint(void __maybe_unused *sess_ctx,
 	(void)&sess_ctx; /* Unused parameter */
 
 	switch (cmd_id) {
-	case TRUSTED_CR_LOAD_CHECKPOINT:
+	case TRUSTED_CR_EXECUTE_CHECKPOINT:
 		return print_string(param_types, params);
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;

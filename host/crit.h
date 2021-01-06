@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <sys/socket.h> 
 #include <arpa/inet.h> 
+#include <err.h>
 
 #define PORT 50007
 
@@ -39,9 +40,7 @@ bool critserver_connect() {
     } 
 
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) { 
-        printf("Connection to CRIT server failed.\n");
-        printf("Is it running?\n"); 
-        return false; 
+        errx(1, "Connection to CRIT server failed. Is it running?\n"); 
     }
 
     connected = true;
