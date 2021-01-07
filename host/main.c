@@ -62,7 +62,7 @@ enum RUN_MODE parse_arguments(int argc, char *argv[]);
 
 int parse_pid(enum RUN_MODE mode, int argc, char *argv[]);
 
-void secure_execute(int pid);
+void secure_execute(int pid, enum RUN_MODE mode);
 
 void prepare_shared_buffer_1(struct trusted_cr_checkpoint * checkpoint, 
 void ** shared_buffer_1, TEEC_SharedMemory * shared_memory_1);
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
 	if(pid == -1)
 		errx(1, "Error: pid is %d\n", pid);
 
-	secure_execute(pid);
+	secure_execute(pid, mode);
 
 	// Close connection to critserver if it is open
 	critserver_disconnect();
@@ -130,14 +130,8 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 		if(pid < 0)
 			errx(1, "Invalid pid\n");
 
-		if(mode == DUMP_MIGRATION_API) {
-			// A binary asks to be migrated via the API
-			// We need to dump it with CRIU in a special way to exit the endless loop
-			criu_dump_migration_api(pid);
-		} else if (mode == DUMP_AND_MIGRATE) {
-			// Dump and migrate an already running binary
-			criu_dump(pid);
-		}
+		// Dump and migrate an already running binary
+		criu_dump(pid);
 	} else if(mode == START_MIGRATED) {
 		// Run a binary from the very first instruction in the secure world
 		// Skip the first argument which is ./trusted_cr self
@@ -160,7 +154,7 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 	return pid;
 }
 
-void secure_execute(int pid) {
+void secure_execute(int pid, enum RUN_MODE mode) {
 	TEEC_Result res;
 	TEEC_Context ctx;
 	TEEC_Session sess;
@@ -186,10 +180,18 @@ void secure_execute(int pid) {
 	
 	bool stop_execution = false;
 	bool migrate_back = false;
+	bool migrated = false;
 
 	while(!stop_execution) {
 		// Decode all checkpoint files with CRIT and parse the checkpoint files, store it in &checkpoint.
 		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
+
+		// For binaries that use the migration API
+		// Change the register to exit the loop
+		if(mode == DUMP_MIGRATION_API && !migrated) {
+			migrated = true;
+			checkpoint.regs.regs[0] = 0;
+		}
 
 		// Fill shared buffer 1 with the checkpoint struct: registers, vma's, pagemap entries, etc.
 		prepare_shared_buffer_1(&checkpoint, &shared_buffer_1, &shared_memory_1);

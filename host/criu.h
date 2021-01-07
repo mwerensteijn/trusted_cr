@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static char MIGRATE_COMMAND_STRING[]        = "./criu.sh migrate -t %s -D check --shell-job -v0";
 static char DUMP_COMMAND_STRING[]           = "./criu.sh dump -t %s -D check --shell-job -v0";
 static char START_MIGRATED_COMMAND_STRING[] = "./criu.sh start -D check --shell-job --exec-cmd -v0 -- ";
 
@@ -35,10 +34,6 @@ void criu_execute_command(char * cmd, int pid) {
 
 void criu_dump(int pid) {
     criu_execute_command(DUMP_COMMAND_STRING, pid);
-}
-
-void criu_dump_migration_api(int pid) {
-    criu_execute_command(MIGRATE_COMMAND_STRING, pid);
 }
 
 void criu_start_migrated(int arguments, char * argv[]) {
