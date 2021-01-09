@@ -34,6 +34,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "jsmn.h"
 #include "crit.h"
@@ -50,6 +51,8 @@
 
 /* To the the UUID (found the the TA's h-file(s)) */
 #include <trusted_cr_ta.h>
+
+struct timeval  start_time, end_time;
 
 enum RUN_MODE {
 	UNKNOWN,		
@@ -80,6 +83,7 @@ void print_usage() {
 
 int main(int argc, char *argv[])
 {
+	gettimeofday(&start_time, NULL);
 	printf("Trusted-CR\n\n");
 
 	enum RUN_MODE mode = parse_arguments(argc, argv);
@@ -135,7 +139,18 @@ int parse_pid(enum RUN_MODE mode, int argc, char *argv[]) {
 	} else if(mode == START_MIGRATED) {
 		// Run a binary from the very first instruction in the secure world
 		// Skip the first argument which is ./trusted_cr self
+
+		gettimeofday(&end_time, NULL);
+		printf ("From start to call criu: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
+
 		criu_start_migrated(argc - 1, argv + 1);
+
+		gettimeofday(&end_time, NULL);
+		printf ("CRIU start migrated: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
 
 		// We don't know any pid yet. Parse it from pstree.img
 		// First decode pstree.img with crit
@@ -181,10 +196,15 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 	bool stop_execution = false;
 	bool migrate_back = false;
 	bool migrated = false;
+	
+	gettimeofday(&end_time, NULL);
+	printf ("Parsing pid & Setup TEE: Total time = %f seconds \n", 
+	(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
 
 	while(!stop_execution) {
 		// Decode all checkpoint files with CRIT and parse the checkpoint files, store it in &checkpoint.
 		parse_checkpoint_files(pid, &checkpoint_files, &checkpoint);
+		gettimeofday(&start_time, NULL);
 
 		// For binaries that use the migration API
 		// Change the register to exit the loop
@@ -222,9 +242,14 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 		op.params[1].memref.size = shared_memory_2.size;
 		op.params[1].memref.offset = 0;
 		
+		gettimeofday(&end_time, NULL);
+		printf ("Preparing the shared buffers: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+
 		/* TRUSTED_CR_EXECUTE_CHECKPOINT is the actual function in the TA to be called. */
 		printf("\nLoading & executing checkpoint: %s\n", checkpoint_files[EXECUTABLE_BINARY_FILE].filename);
 
+		gettimeofday(&start_time, NULL);
 		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_EXECUTE_CHECKPOINT, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
@@ -268,14 +293,29 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 				checkpoint.result != TRUSTED_CR_SYSCALL_UNSUPPORTED &&
 				checkpoint.result != TRUSTED_CR_SYSCALL_MIGRATE_BACK);
 		
+		gettimeofday(&end_time, NULL);
+		printf ("Secure worl execution: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
+
 		// Invoke command TRUSTED_CR_CHECKPOINT_BACK to ask the TA to put the dirty checkpoint data in shared buffer 1.
 		res = TEEC_InvokeCommand(&sess, TRUSTED_CR_CHECKPOINT_BACK, &op, &err_origin);
 		if (res != TEEC_SUCCESS)
 			errx(1, "TEEC_InvokeCommand failed with code 0x%lx origin 0x%lx", res, err_origin);
 
+		gettimeofday(&end_time, NULL);
+		printf ("Checkpointing back: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+
+		gettimeofday(&start_time, NULL);
 		// Now parse the data in shared buffer 1 and use it to update the checkpoint files: update the registers,
 		// add dirty pagemap entries and patch the pages-1.img file.
 		update_checkpoint_files(&checkpoint, &checkpoint_files, op.params[1].memref.parent->buffer);
+
+		gettimeofday(&end_time, NULL);
+		printf ("Updating checkpoint files: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
 
 		// Release and free all allocated memory
 		TEEC_ReleaseSharedMemory(&shared_memory_1);
@@ -288,22 +328,49 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 			free(checkpoint_files[i].buffer);
 		}
 
+		gettimeofday(&end_time, NULL);
+		printf ("Freeing: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
+
 		// Re-encode the updated .txt checkpoint files to .img files
 		critserver_encode_checkpoint(pid);
+
+		gettimeofday(&end_time, NULL);
+		printf ("Crit encoding updated checkpoint: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
 
 		// Copy back the patched pages-1.img file
 		system("cp -rf modified_pages-1.img check/pages-1.img");
 
+		gettimeofday(&end_time, NULL);
+		printf ("Copying modified pages-1.img: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
+
 		if(!stop_execution) {
 			// Execute one single system call with CRIU
 			system("./criu.sh execute -D check --shell-job -v0");
+			gettimeofday(&end_time, NULL);
+			printf ("Executing the syscall with CRIU: Total time = %f seconds \n", 
+			(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+			gettimeofday(&start_time, NULL);
 		}
 	}
 
 	if(migrate_back) {
 		// The binary has asked to migrate back to the normal world via the
 		// migration API. Now restore it with CRIU like a normal checkpoint.
+		gettimeofday(&start_time, NULL);
+
 		system("./criu.sh restore -D check --shell-job --restore-detached -v0");
+
+		gettimeofday(&end_time, NULL);
+		printf ("Releasing the binary back in the wild: Total time = %f seconds \n", 
+		(double) (end_time.tv_sec - start_time.tv_sec) + ((double) (end_time.tv_usec - start_time.tv_usec) / 1000000.0));
+		gettimeofday(&start_time, NULL);
+		
 	}
 	
 	// We're done with the TA, close the session and destroy the context.
