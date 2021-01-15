@@ -249,6 +249,9 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 					migrate_back = true;
 					printf("Secure world wants to migrate back.\n");
 					break;
+				case TRUSTED_CR_OUT_OF_MEMORY:
+					printf("out of mem\n");
+					break;
 				default:
 					printf("no idea what happened.\n");
 					break;
@@ -294,7 +297,7 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 		// Copy back the patched pages-1.img file
 		system("cp -rf modified_pages-1.img check/pages-1.img");
 
-		if(!stop_execution) {
+		if(!stop_execution && (checkpoint.result != TRUSTED_CR_OUT_OF_MEMORY)) {
 			// Execute one single system call with CRIU
 			system("./criu.sh execute -D check --shell-job -v0");
 		}
