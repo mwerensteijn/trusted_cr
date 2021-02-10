@@ -190,7 +190,7 @@ void secure_execute(int pid, enum RUN_MODE mode) {
 		// Change the register to exit the loop
 		if(mode == DUMP_MIGRATION_API && !migrated) {
 			migrated = true;
-			checkpoint.regs.regs[0] = 0;
+			checkpoint.regs.regs[1] = 0;
 		}
 
 		// Fill shared buffer 1 with the checkpoint struct: registers, vma's, pagemap entries, etc.
